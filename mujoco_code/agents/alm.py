@@ -12,6 +12,18 @@ from utils import logger
 from models import *
 
 
+def gaussian_wasserstein_2_dist(
+    mu1: torch.Tensor, std1: torch.Tensor, mu2: torch.Tensor, std2: torch.Tensor
+) -> torch.Tensor:
+    """
+    Compute the Wasserstein distance between two Gaussian distributions with diagonal covariance.
+    """
+    return torch.sqrt(
+        torch.linalg.norm(mu1 - mu2, dim=-1).pow(2)
+        + torch.linalg.norm(std1 - std2, dim=-1).pow(2)
+    )
+
+
 class AlmAgent(object):
     def __init__(
         self,
@@ -40,7 +52,8 @@ class AlmAgent(object):
         if self.aux is None:
             self.aux_optim = None
             self.aux_coef_cfg = "v-0.0"
-        assert self.aux in ["fkl", "rkl", "l2", "op-l2", "op-kl", None]
+        self.bisim_gamma = cfg.get("bisim_gamma", 1.0)
+        assert self.aux in ["fkl", "rkl", "l2", "op-l2", "op-kl", "bisim", None]
         assert self.aux_optim in ["ema", "detach", "online", None]
 
         # learning
@@ -309,6 +322,7 @@ class AlmAgent(object):
         self._check_collapse(z_batch.detach(), metrics)
 
         log = True
+        aux_loss = None
 
         if self.disable_reward:
             if self.aux is not None:
@@ -332,7 +346,7 @@ class AlmAgent(object):
                     log = False
 
                 aux_loss, z_next_prior_batch = self._aux_loss(
-                    z_batch,
+                    z_batch,  # WHY DOESN"T THIS DEPEND ON state_seq[t]?
                     action_seq[t],
                     next_state_seq[t],
                     reward_seq[t],
@@ -381,9 +395,35 @@ class AlmAgent(object):
         reward_batch: torch.Tensor,
         log: bool,
         metrics: Dict[str, Any],
+        bisim_samps: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        if "bsim" in self.aux:
-            pass
+        if "bisim" in self.aux:
+            bisim_samps = bisim_samps if bisim_samps is not None else self.batch_size
+            assert bisim_samps % 2 == 0
+
+            next_z_dists = self.encoder(next_state_batch)
+
+            rand_idxs = torch.randperm(bisim_samps)
+            idxs_i = rand_idxs[: bisim_samps // 2]
+            idxs_j = rand_idxs[bisim_samps // 2 :]
+
+            encoded_distance = torch.linalg.norm(
+                z_batch[idxs_i] - z_batch[idxs_j], dim=-1
+            )
+
+            reward_distance = torch.abs(reward_batch[idxs_i] - reward_batch[idxs_j])
+            transition_prob_distance = gaussian_wasserstein_2_dist(
+                next_z_dists.mean[idxs_i],
+                next_z_dists.stddev[idxs_i],
+                next_z_dists.mean[idxs_j],
+                next_z_dists.stddev[idxs_j],
+            )
+            bisim_distance = (
+                reward_distance + self.bisim_gamma * transition_prob_distance
+            )
+
+            bisim_loss = F.mse_loss(encoded_distance, bisim_distance)
+            return bisim_loss, None
 
         if "op" in self.aux:
             next_state_pred = self.model(z_batch, action_batch)  # p_o(s' | z, a)

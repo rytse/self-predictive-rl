@@ -1,3 +1,4 @@
+from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,7 +9,7 @@ from utils import logger
 
 
 class DetEncoder(nn.Module):
-    def __init__(self, input_shape, hidden_dims, latent_dims):
+    def __init__(self, input_shape: int, hidden_dims: int, latent_dims: int):
         super().__init__()
         self.latent_dims = latent_dims
         self.encoder = nn.Sequential(
@@ -22,13 +23,13 @@ class DetEncoder(nn.Module):
         self.apply(utils.weight_init)
         logger.log(self)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> utils.Dirac:
         loc = self.encoder(x)
         return utils.Dirac(loc)
 
 
 class StoEncoder(nn.Module):
-    def __init__(self, input_shape, hidden_dims, latent_dims):
+    def __init__(self, input_shape: int, hidden_dims: int, latent_dims: int):
         super().__init__()
         self.latent_dims = latent_dims
         self.encoder = nn.Sequential(
@@ -44,9 +45,9 @@ class StoEncoder(nn.Module):
         self.apply(utils.weight_init)
         logger.log(self)
 
-    def forward(self, x):
-        x = self.encoder(x)
-        mean, std = torch.chunk(x, 2, -1)
+    def forward(self, x: torch.Tensor) -> td.Independent:
+        z = self.encoder(x)
+        mean, std = torch.chunk(z, 2, -1)
         mean = 30 * torch.tanh(mean / 30)  # [-30, 30]
         std = self.std_max - F.softplus(self.std_max - std)
         std = self.std_min + F.softplus(std - self.std_min)  # (-std_min, std_max)
@@ -55,7 +56,12 @@ class StoEncoder(nn.Module):
 
 class DetModel(nn.Module):
     def __init__(
-        self, latent_dims, action_dims, hidden_dims, num_layers=2, obs_dims=None
+        self,
+        latent_dims: int,
+        action_dims: int,
+        hidden_dims: int,
+        num_layers: int = 2,
+        obs_dims: Optional[int] = None,
     ):
         super().__init__()
         self.latent_dims = latent_dims
@@ -68,7 +74,7 @@ class DetModel(nn.Module):
         self.apply(utils.weight_init)
         logger.log(self)
 
-    def _build_model(self):
+    def _build_model(self) -> nn.Module:
         model = [nn.Linear(self.action_dims + self.latent_dims, self.hidden_dims)]
         model += [nn.ELU()]
         for i in range(self.num_layers - 1):
@@ -82,7 +88,7 @@ class DetModel(nn.Module):
         ]
         return nn.Sequential(*model)
 
-    def forward(self, z, action):
+    def forward(self, z: torch.Tensor, action: torch.Tensor) -> utils.Dirac:
         x = torch.cat([z, action], axis=-1)
         loc = self.model(x)
         return utils.Dirac(loc)
@@ -90,7 +96,12 @@ class DetModel(nn.Module):
 
 class StoModel(nn.Module):
     def __init__(
-        self, latent_dims, action_dims, hidden_dims, num_layers=2, obs_dims=None
+        self,
+        latent_dims: int,
+        action_dims: int,
+        hidden_dims: int,
+        num_layers: int = 2,
+        obs_dims: Optional[int] = None,
     ):
         super().__init__()
         self.latent_dims = latent_dims
@@ -105,7 +116,7 @@ class StoModel(nn.Module):
         self.apply(utils.weight_init)
         logger.log(self)
 
-    def _build_model(self):
+    def _build_model(self) -> nn.Module:
         model = [nn.Linear(self.action_dims + self.latent_dims, self.hidden_dims)]
         model += [nn.ELU()]
         for i in range(self.num_layers - 1):
@@ -119,7 +130,7 @@ class StoModel(nn.Module):
         ]
         return nn.Sequential(*model)
 
-    def forward(self, z, action):
+    def forward(self, z: torch.Tensor, action: torch.Tensor) -> td.Independent:
         x = torch.cat([z, action], axis=-1)
         x = self.model(x)
         mean, std = torch.chunk(x, 2, -1)
@@ -130,7 +141,7 @@ class StoModel(nn.Module):
 
 
 class RewardPrior(nn.Module):
-    def __init__(self, latent_dims, hidden_dims, action_dims):
+    def __init__(self, latent_dims: int, hidden_dims: int, action_dims: int):
         super().__init__()
         self.reward = nn.Sequential(
             nn.Linear(latent_dims + action_dims, hidden_dims),
@@ -143,14 +154,14 @@ class RewardPrior(nn.Module):
         self.apply(utils.weight_init)
         logger.log(self)
 
-    def forward(self, z, a):
+    def forward(self, z: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
         z_a = torch.cat([z, a], -1)
         reward = self.reward(z_a)
         return reward
 
 
 class Discriminator(nn.Module):
-    def __init__(self, latent_dims, hidden_dims, action_dims):
+    def __init__(self, latent_dims: int, hidden_dims: int, action_dims: int):
         super().__init__()
         self.classifier = nn.Sequential(
             nn.Linear(2 * latent_dims + action_dims, hidden_dims),
@@ -163,12 +174,16 @@ class Discriminator(nn.Module):
         self.apply(utils.weight_init)
         logger.log(self)
 
-    def forward(self, z, a, z_next):
+    def forward(
+        self, z: torch.Tensor, a: torch.Tensor, z_next: torch.Tensor
+    ) -> torch.Tensor:
         x = torch.cat([z, a, z_next], -1)
         logits = self.classifier(x)
         return logits
 
-    def get_reward(self, z, a, z_next):
+    def get_reward(
+        self, z: torch.Tensor, a: torch.Tensor, z_next: torch.Tensor
+    ) -> torch.Tensor:
         x = torch.cat([z, a, z_next], -1)
         logits = self.classifier(x)
         reward = torch.sub(logits[..., 1], logits[..., 0])
@@ -176,7 +191,7 @@ class Discriminator(nn.Module):
 
 
 class Critic(nn.Module):
-    def __init__(self, latent_dims, hidden_dims, action_shape):
+    def __init__(self, latent_dims: int, hidden_dims: int, action_shape: int):
         super().__init__()
         self.Q1 = nn.Sequential(
             nn.Linear(latent_dims + action_shape, hidden_dims),
@@ -199,7 +214,9 @@ class Critic(nn.Module):
         self.apply(utils.weight_init)
         logger.log(self)
 
-    def forward(self, x, a):
+    def forward(
+        self, x: torch.Tensor, a: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         x_a = torch.cat([x, a], -1)
         q1 = self.Q1(x_a)
         q2 = self.Q2(x_a)
@@ -207,7 +224,14 @@ class Critic(nn.Module):
 
 
 class Actor(nn.Module):
-    def __init__(self, input_shape, hidden_dims, output_shape, low, high):
+    def __init__(
+        self,
+        input_shape: int,
+        hidden_dims: int,
+        output_shape: int,
+        low: float,
+        high: float,
+    ):
         super().__init__()
         self.low = low
         self.high = high
@@ -217,7 +241,7 @@ class Actor(nn.Module):
         self.apply(utils.weight_init)
         logger.log(self)
 
-    def forward(self, x, std):
+    def forward(self, x: torch.Tensor, std: float) -> utils.TruncatedNormal:
         x = F.elu(self.fc1(x))
         x = F.elu(self.fc2(x))
         mean = torch.tanh(self.mean(x))
@@ -227,7 +251,14 @@ class Actor(nn.Module):
 
 
 class StoActor(nn.Module):
-    def __init__(self, input_shape, hidden_dims, output_shape, low, high):
+    def __init__(
+        self,
+        input_shape: int,
+        hidden_dims: int,
+        output_shape: int,
+        low: float,
+        high: float,
+    ):
         super().__init__()
         self.low = low
         self.high = high
@@ -239,7 +270,7 @@ class StoActor(nn.Module):
         self.apply(utils.weight_init)
         logger.log(self)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> utils.TruncatedNormal:
         x = F.elu(self.fc1(x))
         x = F.elu(self.fc2(x))
         x = self.fc3(x)

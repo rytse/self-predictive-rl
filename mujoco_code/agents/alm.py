@@ -89,9 +89,9 @@ class AlmAgent(object):
             latent_dims,
             num_actions,
             model_hidden_dims,
-            obs_dims=num_states
-            if self.aux is not None and "op" in self.aux
-            else None,  # learn ZP or OP
+            obs_dims=(
+                num_states if self.aux is not None and "op" in self.aux else None
+            ),  # learn ZP or OP
         ).to(self.device)
 
         self.critic = Critic(latent_dims, hidden_dims, num_actions).to(self.device)

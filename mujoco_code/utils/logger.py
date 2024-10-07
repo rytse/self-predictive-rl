@@ -20,6 +20,7 @@ it will record all the data to format_strs you specified,
     with tensorboard add scalar("training/{k}", v, i)
 
 """
+
 import os
 import sys
 import os.path as osp

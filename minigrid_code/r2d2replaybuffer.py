@@ -184,9 +184,13 @@ class r2d2_ReplayMemory:
         ep_rewards_ = ls_curr_rewards[:-1]
         discounted_sum = [
             [
-                sum_rewards(ep_rewards_[x + y : x + y + self.forward_len], self.gamma)
-                if x + y != len(ep_rewards_)
-                else ls_curr_rewards[x + y]
+                (
+                    sum_rewards(
+                        ep_rewards_[x + y : x + y + self.forward_len], self.gamma
+                    )
+                    if x + y != len(ep_rewards_)
+                    else ls_curr_rewards[x + y]
+                )
                 for y in range(0, min(self.learning_obs_len, T - x))
             ]
             for x in range(0, T, self.learning_obs_len)
@@ -226,39 +230,39 @@ class r2d2_ReplayMemory:
             )
 
             # store TD and AIS data
-            self.buffer_current_act[
-                self.position_r2d2, : len(current_act_list[i])
-            ] = np.argmax(current_act_list[i], axis=-1)
-            self.buffer_next_obs[
-                self.position_r2d2, : len(next_obs_list[i]), :
-            ] = next_obs_list[i]
+            self.buffer_current_act[self.position_r2d2, : len(current_act_list[i])] = (
+                np.argmax(current_act_list[i], axis=-1)
+            )
+            self.buffer_next_obs[self.position_r2d2, : len(next_obs_list[i]), :] = (
+                next_obs_list[i]
+            )
             self.buffer_model_target_rewards[
                 self.position_r2d2, : len(ep_rewards_list[i])
             ] = ep_rewards_list[i]
 
-            self.buffer_rewards[
-                self.position_r2d2, : len(discounted_sum[i])
-            ] = np.array(discounted_sum[i])
+            self.buffer_rewards[self.position_r2d2, : len(discounted_sum[i])] = (
+                np.array(discounted_sum[i])
+            )
             self.buffer_learning_len[self.position_r2d2] = len(discounted_sum[i])
-            self.buffer_forward_idx[
-                self.position_r2d2, : len(discounted_sum[i])
-            ] = np.array(
-                [
-                    min(j + self.forward_len, len(learning_obs_list[i]) - 1)
-                    for j in range(len(discounted_sum[i]))
-                ]
+            self.buffer_forward_idx[self.position_r2d2, : len(discounted_sum[i])] = (
+                np.array(
+                    [
+                        min(j + self.forward_len, len(learning_obs_list[i]) - 1)
+                        for j in range(len(discounted_sum[i]))
+                    ]
+                )
             )
 
             # NOTE: assume all dones are terminated, which is okay in minigrid tasks
             # where the timeout reward is exact 0.0,
             # and the training code is hard to adapt to timeout scenarios, as it
-            self.buffer_final_flag[
-                self.position_r2d2, : len(discounted_sum[i])
-            ] = np.array(
-                [
-                    int(i * self.learning_obs_len + j < T - 1)
-                    for j in range(len(discounted_sum[i]))
-                ]
+            self.buffer_final_flag[self.position_r2d2, : len(discounted_sum[i])] = (
+                np.array(
+                    [
+                        int(i * self.learning_obs_len + j < T - 1)
+                        for j in range(len(discounted_sum[i]))
+                    ]
+                )
             )
             self.buffer_model_final_flag[
                 self.position_r2d2, : len(discounted_sum[i])

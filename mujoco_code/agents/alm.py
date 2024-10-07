@@ -1,8 +1,12 @@
+from typing import Any, Dict, Optional, Tuple
+
+from omegaconf.dictconfig import DictConfig
 import torch
 import torch.nn as nn
 import torch.distributions as td
 import torch.nn.functional as F
 import numpy as np
+import numpy.typing as npt
 import utils
 from utils import logger
 from models import *
@@ -11,13 +15,13 @@ from models import *
 class AlmAgent(object):
     def __init__(
         self,
-        device,
-        action_low,
-        action_high,
-        num_states,
-        num_actions,
-        env_buffer_size,
-        cfg,
+        device: torch.device,
+        action_low: float,
+        action_high: float,
+        num_states: int,
+        num_actions: int,
+        env_buffer_size: int,
+        cfg: DictConfig,
     ):
         self.device = device
         self.action_low = action_low
@@ -70,8 +74,13 @@ class AlmAgent(object):
         self._init_optims(cfg.lr)
 
     def _init_networks(
-        self, num_states, num_actions, latent_dims, hidden_dims, model_hidden_dims
-    ):
+        self,
+        num_states: int,
+        num_actions: int,
+        latent_dims: int,
+        hidden_dims: int,
+        model_hidden_dims: int,
+    ) -> None:
         if self.aux in [None, "l2", "op-l2"]:
             EncoderClass, ModelClass = DetEncoder, DetModel
         else:  # fkl, rkl, op-kl
@@ -130,7 +139,7 @@ class AlmAgent(object):
             self.aux_constraint = None
             self.aux_coef = value
 
-    def _init_optims(self, lr):
+    def _init_optims(self, lr: Dict[str, Any]) -> None:
         self.model_opt = torch.optim.Adam(
             [
                 {"params": self.encoder.parameters()},
@@ -148,12 +157,14 @@ class AlmAgent(object):
         if self.aux_constraint is not None:
             self.coef_opt = torch.optim.Adam([self.aux_coef_log], lr=lr["model"])
 
-    def get_coef(self):
+    def get_coef(self) -> float:
         if self.aux_constraint is None:
             return self.aux_coef
         return self.aux_coef_log.exp().item()
 
-    def get_action(self, state, step, eval=False):
+    def get_action(
+        self, state: npt.NDArray, step: int, eval: bool = False
+    ) -> npt.NDArray:
         std = utils.linear_schedule(
             self.expl_start, self.expl_end, self.expl_duration, step
         )
@@ -168,7 +179,7 @@ class AlmAgent(object):
 
         return action.cpu().numpy()[0]
 
-    def get_representation(self, state):
+    def get_representation(self, state: npt.NDArray) -> npt.NDArray:
         with torch.no_grad():
             state = torch.FloatTensor(state).to(self.device)
             z = self.encoder(state).sample()
@@ -197,7 +208,9 @@ class AlmAgent(object):
             lower_bound = torch.sum(discount * returns, dim=0)
         return lower_bound.cpu().numpy()
 
-    def _rollout_evaluation(self, z_batch, action_batch, std):
+    def _rollout_evaluation(
+        self, z_batch: torch.Tensor, action_batch: torch.Tensor, std: float
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         z_seq = [z_batch]
         action_seq = [action_batch]
         with torch.no_grad():
@@ -214,7 +227,7 @@ class AlmAgent(object):
         action_seq = torch.stack(action_seq, dim=0)
         return z_seq, action_seq
 
-    def update(self, step):
+    def update(self, step: int) -> None:
         metrics = dict()
         std = utils.linear_schedule(
             self.expl_start, self.expl_end, self.expl_duration, step
@@ -238,7 +251,9 @@ class AlmAgent(object):
                 logger.record_tabular(k, v)
             logger.dump_tabular()
 
-    def update_representation(self, std, log, metrics):
+    def update_representation(
+        self, std: float, log: bool, metrics: Dict[str, Any]
+    ) -> None:
         (
             state_seq,
             action_seq,
@@ -254,7 +269,7 @@ class AlmAgent(object):
         done_seq = torch.FloatTensor(done_seq).to(self.device)  # (T, B)
 
         alm_loss, aux_loss = self.alm_loss(
-            state_seq, action_seq, next_state_seq, std, metrics
+            state_seq, action_seq, next_state_seq, reward_seq, std, metrics
         )
 
         self.model_opt.zero_grad()
@@ -269,6 +284,7 @@ class AlmAgent(object):
             metrics["model_grad_norm"] = model_grad_norm.item()
 
         if self.aux_constraint is not None:
+            assert aux_loss is not None
             self.coef_opt.zero_grad()
             coef_loss = self.aux_coef_log.exp() * (
                 self.aux_constraint - aux_loss.mean().item()
@@ -279,7 +295,15 @@ class AlmAgent(object):
             if log:
                 metrics["coef"] = self.get_coef()
 
-    def alm_loss(self, state_seq, action_seq, next_state_seq, std, metrics):
+    def alm_loss(
+        self,
+        state_seq: torch.Tensor,
+        action_seq: torch.Tensor,
+        next_state_seq: torch.Tensor,
+        reward_seq: torch.Tensor,
+        std: float,
+        metrics: Dict[str, Any],
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         z_dist = self.encoder(state_seq[0])
         z_batch = z_dist.rsample()  # z (B, Z)
         self._check_collapse(z_batch.detach(), metrics)
@@ -289,7 +313,12 @@ class AlmAgent(object):
         if self.disable_reward:
             if self.aux is not None:
                 aux_loss, _ = self._aux_loss(
-                    z_batch, action_seq[0], next_state_seq[0], log, metrics
+                    z_batch,
+                    action_seq[0],
+                    next_state_seq[0],
+                    reward_seq[0],
+                    log,
+                    metrics,
                 )  # (B, 1)
                 alm_loss = self.get_coef() * aux_loss
                 alm_loss = alm_loss.mean()
@@ -303,7 +332,12 @@ class AlmAgent(object):
                     log = False
 
                 aux_loss, z_next_prior_batch = self._aux_loss(
-                    z_batch, action_seq[t], next_state_seq[t], log, metrics
+                    z_batch,
+                    action_seq[t],
+                    next_state_seq[t],
+                    reward_seq[t],
+                    log,
+                    metrics,
                 )
                 reward_loss = self._alm_reward_loss(
                     z_batch, action_seq[t], log, metrics
@@ -327,7 +361,7 @@ class AlmAgent(object):
         alm_loss += actor_loss
         return alm_loss, aux_loss
 
-    def _check_collapse(self, z_batch, metrics):
+    def _check_collapse(self, z_batch: torch.Tensor, metrics: Dict[str, Any]) -> None:
         from torch.linalg import matrix_rank, cond
 
         rank3 = matrix_rank(z_batch, atol=1e-3, rtol=1e-3)
@@ -339,7 +373,18 @@ class AlmAgent(object):
         metrics["rank-1"] = rank1.item()
         metrics["cond"] = condition.item()
 
-    def _aux_loss(self, z_batch, action_batch, next_state_batch, log, metrics):
+    def _aux_loss(
+        self,
+        z_batch: torch.Tensor,
+        action_batch: torch.Tensor,
+        next_state_batch: torch.Tensor,
+        reward_batch: torch.Tensor,
+        log: bool,
+        metrics: Dict[str, Any],
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        if "bsim" in self.aux:
+            pass
+
         if "op" in self.aux:
             next_state_pred = self.model(z_batch, action_batch)  # p_o(s' | z, a)
 
@@ -394,7 +439,13 @@ class AlmAgent(object):
 
         return distance, z_next_prior_dist.rsample()
 
-    def _alm_reward_loss(self, z_batch, action_batch, log, metrics):
+    def _alm_reward_loss(
+        self,
+        z_batch: torch.Tensor,
+        action_batch: torch.Tensor,
+        log: bool,
+        metrics: Dict[str, Any],
+    ) -> torch.Tensor:
         with utils.FreezeParameters(self.reward_list):
             reward = self.reward(z_batch, action_batch)  # r_z(z, a)
 
@@ -403,7 +454,7 @@ class AlmAgent(object):
 
         return reward
 
-    def update_rest(self, std, log, metrics):
+    def update_rest(self, std, log: bool, metrics: Dict[str, Any]) -> None:
         (
             state_batch,
             action_batch,
@@ -457,14 +508,14 @@ class AlmAgent(object):
 
     def update_reward(
         self,
-        z_batch,
-        action_batch,
-        reward_batch,
-        z_next_batch,
-        z_next_prior_batch,
-        log,
-        metrics,
-    ):
+        z_batch: torch.Tensor,
+        action_batch: torch.Tensor,
+        reward_batch: torch.Tensor,
+        z_next_batch: torch.Tensor,
+        z_next_prior_batch: torch.Tensor,
+        log: bool,
+        metrics: Dict[str, Any],
+    ) -> None:
         reward_loss = self._extrinsic_reward_loss(
             z_batch, action_batch, reward_batch.unsqueeze(-1), log, metrics
         )
@@ -481,7 +532,14 @@ class AlmAgent(object):
         if log:
             metrics["reward_grad_norm"] = reward_grad_norm.mean().item()
 
-    def _extrinsic_reward_loss(self, z_batch, action_batch, reward_batch, log, metrics):
+    def _extrinsic_reward_loss(
+        self,
+        z_batch: torch.Tensor,
+        action_batch: torch.Tensor,
+        reward_batch: torch.Tensor,
+        log: bool,
+        metrics: Dict[str, Any],
+    ) -> torch.Tensor:
         reward_pred = self.reward(z_batch, action_batch)
         reward_loss = F.mse_loss(reward_pred, reward_batch)
 
@@ -494,8 +552,14 @@ class AlmAgent(object):
         return reward_loss
 
     def _intrinsic_reward_loss(
-        self, z, action_batch, z_next, z_next_prior, log, metrics
-    ):
+        self,
+        z: torch.Tensor,
+        action_batch: torch.Tensor,
+        z_next: torch.Tensor,
+        z_next_prior: torch.Tensor,
+        log: bool,
+        metrics: Dict[str, Any],
+    ) -> torch.Tensor:
         ip_batch_shape = z.shape[0]
         false_batch_idx = np.random.choice(
             ip_batch_shape, ip_batch_shape // 2, replace=False
@@ -516,15 +580,15 @@ class AlmAgent(object):
 
     def update_critic(
         self,
-        z_batch,
-        action_batch,
-        reward_batch,
-        z_next_batch,
-        discount_batch,
-        std,
-        log,
-        metrics,
-    ):
+        z_batch: torch.Tensor,
+        action_batch: torch.Tensor,
+        reward_batch: torch.Tensor,
+        z_next_batch: torch.Tensor,
+        discount_batch: torch.Tensor,
+        std: float,
+        log: bool,
+        metrics: Dict[str, Any],
+    ) -> None:
         critic_loss = self._critic_loss(
             z_batch, action_batch, reward_batch, z_next_batch, discount_batch, std
         )
@@ -552,13 +616,13 @@ class AlmAgent(object):
 
     def _critic_loss(
         self,
-        z_batch,
-        action_batch,
-        reward_batch,
-        z_next_batch,
-        discount_batch,
-        std,
-    ):
+        z_batch: torch.Tensor,
+        action_batch: torch.Tensor,
+        reward_batch: torch.Tensor,
+        z_next_batch: torch.Tensor,
+        discount_batch: torch.Tensor,
+        std: float,
+    ) -> torch.Tensor:
         with torch.no_grad():
             next_action_dist = self.actor(z_next_batch, std)
             next_action_batch = next_action_dist.sample(clip=self.stddev_clip)
@@ -574,7 +638,13 @@ class AlmAgent(object):
 
         return critic_loss
 
-    def update_actor(self, z_batch, std, log, metrics):
+    def update_actor(
+        self,
+        z_batch: torch.Tensor,
+        std: torch.Tensor,
+        log: bool,
+        metrics: Dict[str, Any],
+    ) -> None:
         if self.disable_svg:
             actor_loss = self._actor_loss(
                 z_batch, std, detach_qz=True, detach_action=False
@@ -592,7 +662,9 @@ class AlmAgent(object):
         if log:
             metrics["actor_grad_norm"] = actor_grad_norm.mean().item()
 
-    def _actor_loss(self, z_batch, std, detach_qz: bool, detach_action: bool):
+    def _actor_loss(
+        self, z_batch: torch.Tensor, std: float, detach_qz: bool, detach_action: bool
+    ) -> torch.Tensor:
         with utils.FreezeParameters(self.critic_list):
             action_dist = self.actor(z_batch, std)
             action_batch = action_dist.sample(clip=self.stddev_clip)
@@ -605,7 +677,9 @@ class AlmAgent(object):
         actor_loss = -Q.mean()
         return actor_loss
 
-    def _lambda_svg_loss(self, z_batch, std, log, metrics):
+    def _lambda_svg_loss(
+        self, z_batch: torch.Tensor, std: float, log: bool, metrics: Dict[str, Any]
+    ) -> torch.Tensor:
         actor_loss = 0
         z_seq, action_seq = self._rollout_imagination(z_batch, std)
 
@@ -647,7 +721,9 @@ class AlmAgent(object):
 
         return actor_loss
 
-    def _rollout_imagination(self, z_batch, std):
+    def _rollout_imagination(
+        self, z_batch: torch.Tensor, std: float
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         z_seq = [z_batch]
         action_seq = []
         with utils.FreezeParameters([self.model]):
@@ -666,7 +742,7 @@ class AlmAgent(object):
         action_seq = torch.stack(action_seq, dim=0)
         return z_seq, action_seq
 
-    def get_save_dict(self):
+    def get_save_dict(self) -> Dict[str, Any]:
         return {
             "encoder": self.encoder.state_dict(),
             "encoder_target": self.encoder_target.state_dict(),
@@ -678,7 +754,7 @@ class AlmAgent(object):
             "actor": self.actor.state_dict(),
         }
 
-    def load_save_dict(self, saved_dict):
+    def load_save_dict(self, saved_dict: Dict[str, Any]) -> None:
         self.encoder.load_state_dict(saved_dict["encoder"])
         self.encoder_target.load_state_dict(saved_dict["encoder_target"])
         self.model.load_state_dict(saved_dict["model"])
@@ -689,7 +765,14 @@ class AlmAgent(object):
         self.actor.load_state_dict(saved_dict["actor"])
 
 
-def lambda_returns(reward, discount, q_values, bootstrap, horizon, lambda_=0.95):
+def lambda_returns(
+    reward: torch.Tensor,
+    discount: torch.Tensor,
+    q_values: torch.Tensor,
+    bootstrap: torch.Tensor,
+    horizon: int,
+    lambda_: float = 0.95,
+) -> torch.Tensor:
     next_values = torch.cat([q_values[1:], bootstrap[None]], 0)
     inputs = reward + discount * next_values * (1 - lambda_)
     last = bootstrap

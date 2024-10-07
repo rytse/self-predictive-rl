@@ -52,7 +52,7 @@ class AlmAgent(object):
         if self.aux is None:
             self.aux_optim = None
             self.aux_coef_cfg = "v-0.0"
-        self.bisim_gamma = cfg.get("bisim_gamma", 1.0)
+        self.bisim_gamma = cfg.get("bisim_gamma", 0.1)
         assert self.aux in ["fkl", "rkl", "l2", "op-l2", "op-kl", "bisim", None]
         assert self.aux_optim in ["ema", "detach", "online", None]
 
@@ -401,7 +401,8 @@ class AlmAgent(object):
             bisim_samps = bisim_samps if bisim_samps is not None else self.batch_size
             assert bisim_samps % 2 == 0
 
-            next_z_dists = self.encoder(next_state_batch)
+            with torch.no_grad():
+                next_z_dists = self.encoder(next_state_batch)
 
             rand_idxs = torch.randperm(bisim_samps)
             idxs_i = rand_idxs[: bisim_samps // 2]

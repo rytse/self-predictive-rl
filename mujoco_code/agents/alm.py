@@ -18,10 +18,7 @@ def gaussian_wasserstein_2_dist(
     """
     Compute the Wasserstein distance between two Gaussian distributions with diagonal covariance.
     """
-    return torch.sqrt(
-        torch.linalg.norm(mu1 - mu2, dim=-1).pow(2)
-        + torch.linalg.norm(std1 - std2, dim=-1).pow(2)
-    )
+    return torch.sqrt((mu1 - mu2).pow(2) + (std1 - std2).pow(2))
 
 
 class AlmAgent(object):
@@ -408,22 +405,27 @@ class AlmAgent(object):
             idxs_i = rand_idxs[: bisim_samps // 2]
             idxs_j = rand_idxs[bisim_samps // 2 :]
 
-            encoded_distance = torch.linalg.norm(
-                z_batch[idxs_i] - z_batch[idxs_j], dim=-1
+            z_dist = F.smooth_l1_loss(
+                z_batch[idxs_i],
+                z_batch[idxs_j],
+                reduction="none",
             )
 
-            reward_distance = torch.abs(reward_batch[idxs_i] - reward_batch[idxs_j])
-            transition_prob_distance = gaussian_wasserstein_2_dist(
+            r_dist = F.smooth_l1_loss(
+                reward_batch[idxs_i].view(-1, 1),
+                reward_batch[idxs_j].view(-1, 1),
+                reduction="none",
+            )
+            transition_dist = gaussian_wasserstein_2_dist(
                 next_z_dists.mean[idxs_i],
                 next_z_dists.stddev[idxs_i],
                 next_z_dists.mean[idxs_j],
                 next_z_dists.stddev[idxs_j],
             )
-            bisim_distance = (
-                reward_distance + self.bisim_gamma * transition_prob_distance
-            )
 
-            bisim_loss = F.mse_loss(encoded_distance, bisim_distance)
+            bisimilarity = r_dist + self.bisim_gamma * transition_dist
+
+            bisim_loss = F.mse_loss(z_dist, bisimilarity)
             return bisim_loss, None
 
         if "op" in self.aux:

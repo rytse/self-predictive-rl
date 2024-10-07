@@ -43,13 +43,32 @@ def make_env(cfg):
             env = gym.make(cfg.id)
 
             if cfg.distraction > 0:
-                from workspaces.distracted_env import DistractedWrapper
-
-                env = DistractedWrapper(
-                    env,
-                    distraction=cfg.distraction,
-                    scale=cfg.scale,
+                from workspaces.distracted_env import (
+                    GaussianDistractedWrapper,
+                    GaussianMixtureDistractedWrapper,
+                    InterleavedGaussianMixtureDistractedWrapper,
                 )
+
+                if cfg.distraction_type == "gaussian":
+                    env = GaussianDistractedWrapper(
+                        env,
+                        distraction_dims=cfg.distraction,
+                        distraction_scale=cfg.scale,
+                    )
+                elif cfg.distraction_type == "gaussian_mixture":
+                    env = GaussianMixtureDistractedWrapper(
+                        env,
+                        distraction_dims=cfg.distraction,
+                        distraction_scale=cfg.scale,
+                    )
+                elif cfg.distraction_type == "interleaved_gaussian_mixture":
+                    env = InterleavedGaussianMixtureDistractedWrapper(
+                        env,
+                        distraction_dims=cfg.distraction,
+                        distraction_scale=cfg.scale,
+                    )
+                else:
+                    raise NotImplementedError
 
             env = gym.wrappers.RecordEpisodeStatistics(env)
             env.seed(seed=cfg.seed)

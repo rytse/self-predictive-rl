@@ -12,15 +12,6 @@ from utils import logger
 from models import *
 
 
-def gaussian_wasserstein_2_dist(
-    mu1: torch.Tensor, std1: torch.Tensor, mu2: torch.Tensor, std2: torch.Tensor
-) -> torch.Tensor:
-    """
-    Compute the Wasserstein distance between two Gaussian distributions with diagonal covariance.
-    """
-    return torch.sqrt((mu1 - mu2).pow(2) + (std1 - std2).pow(2))
-
-
 class AlmAgent(object):
     def __init__(
         self,
@@ -392,18 +383,13 @@ class AlmAgent(object):
         reward_batch: torch.Tensor,
         log: bool,
         metrics: Dict[str, Any],
-        bisim_samps: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         if "bisim" in self.aux:
-            bisim_samps = bisim_samps if bisim_samps is not None else self.batch_size
-            assert bisim_samps % 2 == 0
-
             with torch.no_grad():
                 next_z_dists = self.encoder(next_state_batch)
 
-            rand_idxs = torch.randperm(bisim_samps)
-            idxs_i = rand_idxs[: bisim_samps // 2]
-            idxs_j = rand_idxs[bisim_samps // 2 :]
+            idxs_i = torch.randperm(self.batch_size)
+            idxs_j = torch.arange(0, self.batch_size)
 
             z_dist = F.smooth_l1_loss(
                 z_batch[idxs_i],
@@ -416,11 +402,9 @@ class AlmAgent(object):
                 reward_batch[idxs_j].view(-1, 1),
                 reduction="none",
             )
-            transition_dist = gaussian_wasserstein_2_dist(
-                next_z_dists.mean[idxs_i],
-                next_z_dists.stddev[idxs_i],
-                next_z_dists.mean[idxs_j],
-                next_z_dists.stddev[idxs_j],
+            transition_dist = torch.sqrt(
+                (next_z_dists.mean[idxs_i] - next_z_dists.mean[idxs_j]).pow(2)
+                + (next_z_dists.stddev[idxs_i] - next_z_dists.stddev[idxs_j]).pow(2)
             )
 
             bisimilarity = r_dist + self.bisim_gamma * transition_dist

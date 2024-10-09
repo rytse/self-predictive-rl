@@ -1,6 +1,7 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Type
 import torch
 import torch.nn as nn
+import torch.nn.utils.parametrizations as param_utils
 import torch.nn.functional as F
 import torch.distributions as td
 import numpy as np
@@ -280,3 +281,47 @@ class StoActor(nn.Module):
         std = self.std_min + F.softplus(std - self.std_min)
         dist = utils.TruncatedNormal(mean, std, self.low, self.high)
         return dist
+
+
+class BisimCritic(nn.Module):
+    def __init__(
+        self,
+        z_dim: int,
+        a_dim: int,
+        hidden_dim: int,
+        activation: Type[nn.Module] = nn.ReLU,
+    ):
+        super().__init__()
+
+        self.arg_net = nn.Sequential(
+            param_utils.spectral_norm(nn.Linear(z_dim, hidden_dim)),
+            activation(),
+            param_utils.spectral_norm(nn.Linear(hidden_dim, hidden_dim)),
+            activation(),
+        )
+        self.cond_net = nn.Sequential(
+            nn.Linear(2 * (z_dim + a_dim), hidden_dim),
+            activation(),
+            nn.Linear(hidden_dim, hidden_dim),
+            activation(),
+        )
+        self.combine_net = nn.Sequential(
+            param_utils.spectral_norm(nn.Linear(2 * hidden_dim, hidden_dim)),
+            activation(),
+            param_utils.spectral_norm(nn.Linear(hidden_dim, hidden_dim)),
+            activation(),
+            param_utils.spectral_norm(nn.Linear(hidden_dim, 1)),
+        )
+
+    def forward(
+        self,
+        zk: torch.Tensor,
+        zi: torch.Tensor,
+        ai: torch.Tensor,
+        zj: torch.Tensor,
+        aj: torch.Tensor,
+    ) -> torch.Tensor:
+        arg = self.arg_net(zk)
+        cond = self.cond_net(torch.cat([zi, ai, zj, aj], -1))
+        x = self.combine_net(torch.cat([arg, cond], -1))
+        return x

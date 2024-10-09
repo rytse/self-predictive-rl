@@ -33,6 +33,10 @@ class AlmAgent(object):
         self.freeze_critic = cfg.freeze_critic
         self.online_encoder_actorcritic = cfg.online_encoder_actorcritic
 
+        # bisim
+        self.bisim_gamma = cfg.get("bisim_gamma", 0.1)
+        self.bisim_critic_train_steps = cfg.get("bisim_critic_train_steps", 5)
+
         # aux
         self.aux = cfg.aux
         self.aux_optim = cfg.aux_optim
@@ -40,8 +44,16 @@ class AlmAgent(object):
         if self.aux is None:
             self.aux_optim = None
             self.aux_coef_cfg = "v-0.0"
-        self.bisim_gamma = cfg.get("bisim_gamma", 0.1)
-        assert self.aux in ["fkl", "rkl", "l2", "op-l2", "op-kl", "bisim", None]
+        assert self.aux in [
+            "fkl",
+            "rkl",
+            "l2",
+            "op-l2",
+            "op-kl",
+            "bisim",
+            "bisim_critic",
+            None,
+        ]
         assert self.aux_optim in ["ema", "detach", "online", None]
 
         # learning
@@ -110,6 +122,11 @@ class AlmAgent(object):
         )
         utils.hard_update(self.critic_target, self.critic)
 
+        if self.aux == "bisim_critic":
+            self.bisim_critic = BisimCritic(latent_dims, num_actions, hidden_dims).to(
+                self.device
+            )
+
         self.actor = Actor(
             latent_dims, hidden_dims, num_actions, self.action_low, self.action_high
         ).to(self.device)
@@ -150,6 +167,11 @@ class AlmAgent(object):
         )
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=lr["actor"])
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=lr["critic"])
+
+        if self.aux == "bisim_critic":
+            self.bisim_critic_opt = torch.optim.Adam(
+                self.bisim_critic.parameters(), lr=lr["model"]
+            )
 
         if not self.disable_reward:
             self.reward_opt = torch.optim.Adam(
@@ -269,6 +291,15 @@ class AlmAgent(object):
         reward_seq = torch.FloatTensor(reward_seq).to(self.device)  # (T, B)
         done_seq = torch.FloatTensor(done_seq).to(self.device)  # (T, B)
 
+        if self.aux == "bisim_critic":
+            for _ in range(self.bisim_critic_train_steps):
+                self.bisim_critic_opt.zero_grad()
+                bisim_critic_loss = self.bisim_critic_loss(
+                    state_seq, action_seq, next_state_seq
+                )
+                bisim_critic_loss.backward()
+                self.bisim_critic_opt.step()
+
         alm_loss, aux_loss = self.alm_loss(
             state_seq, action_seq, next_state_seq, reward_seq, std, metrics
         )
@@ -283,6 +314,10 @@ class AlmAgent(object):
         if log:
             metrics["alm_loss"] = alm_loss.item()
             metrics["model_grad_norm"] = model_grad_norm.item()
+
+            metrics["aux_loss"] = aux_loss.item()
+            if self.aux == "bisim_critic":
+                metrics["bisim_critic_loss"] = bisim_critic_loss.item()
 
         if self.aux_constraint is not None:
             assert aux_loss is not None
@@ -375,6 +410,42 @@ class AlmAgent(object):
         metrics["rank-1"] = rank1.item()
         metrics["cond"] = condition.item()
 
+    def bisim_critic_loss(
+        self,
+        state_seq: torch.Tensor,
+        action_seq: torch.Tensor,
+        next_state_seq: torch.Tensor,
+    ) -> torch.Tensor:
+        assert self.aux == "bisim_critic"
+
+        z_dist = self.encoder(state_seq[0])
+        z_batch = z_dist.rsample()  # z (B, Z)
+        action_batch = action_seq[0]
+        next_state_batch = next_state_seq[0]
+
+        with torch.no_grad():
+            next_z_dists = self.encoder(next_state_batch)
+
+        idxs_i = torch.randperm(self.batch_size)
+        idxs_j = torch.arange(0, self.batch_size)
+
+        critique_i = self.bisim_critic(
+            next_z_dists.mean[idxs_i],
+            z_batch[idxs_i],
+            action_batch[idxs_i],
+            z_batch[idxs_j],
+            action_batch[idxs_j],
+        )
+        critique_j = self.bisim_critic(
+            next_z_dists.mean[idxs_j],
+            z_batch[idxs_i],
+            action_batch[idxs_i],
+            z_batch[idxs_j],
+            action_batch[idxs_j],
+        )
+
+        return torch.mean(critique_i - critique_j)  # signed!
+
     def _aux_loss(
         self,
         z_batch: torch.Tensor,
@@ -402,10 +473,30 @@ class AlmAgent(object):
                 reward_batch[idxs_j].view(-1, 1),
                 reduction="none",
             )
-            transition_dist = torch.sqrt(
-                (next_z_dists.mean[idxs_i] - next_z_dists.mean[idxs_j]).pow(2)
-                + (next_z_dists.stddev[idxs_i] - next_z_dists.stddev[idxs_j]).pow(2)
-            )
+
+            if "critic" in self.aux:
+                critique_i = self.bisim_critic(
+                    next_z_dists.mean[idxs_i],
+                    z_batch[idxs_i],
+                    action_batch[idxs_i],
+                    z_batch[idxs_j],
+                    action_batch[idxs_j],
+                )
+                critique_j = self.bisim_critic(
+                    next_z_dists.mean[idxs_j],
+                    z_batch[idxs_i],
+                    action_batch[idxs_i],
+                    z_batch[idxs_j],
+                    action_batch[idxs_j],
+                )
+                transition_dist = F.smooth_l1_loss(
+                    critique_i, critique_j, reduction="none"
+                )
+            else:
+                transition_dist = torch.sqrt(
+                    (next_z_dists.mean[idxs_i] - next_z_dists.mean[idxs_j]).pow(2)
+                    + (next_z_dists.stddev[idxs_i] - next_z_dists.stddev[idxs_j]).pow(2)
+                )
 
             bisimilarity = r_dist + self.bisim_gamma * transition_dist
 

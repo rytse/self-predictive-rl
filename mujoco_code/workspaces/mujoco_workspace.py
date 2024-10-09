@@ -3,6 +3,14 @@ import torch
 import time
 import numpy as np
 
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 from pathlib import Path
 from utils.env import save_frames_as_gif
 from utils import logger
@@ -20,6 +28,10 @@ class MujocoWorkspace:
         self.set_seed()
         self.train_env, self.eval_env = make_env(self.cfg)
         self.agent = make_agent(self.train_env, self.device, self.cfg)
+        self.verbose = cfg.get(
+            "verbose"
+        )  # 0: no print, 1: eval print, 2: train + eval print
+        self.verbose = self.verbose if self.verbose is not None else 1
         self._train_step = 0
         self._train_episode = 0
         self._best_eval_returns = -np.inf
@@ -32,65 +44,79 @@ class MujocoWorkspace:
             torch.cuda.manual_seed_all(self.cfg.seed)
 
     def train(self):
+        progress_bar = Progress(
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TextColumn("•"),
+            TimeElapsedColumn(),
+            TextColumn("•"),
+            TimeRemainingColumn(),
+        )
+
         self._explore()
         self._eval()
 
         state, done, episode_start_time = self.train_env.reset(), False, time.time()
 
-        for _ in range(1, self.cfg.num_train_steps - self.cfg.explore_steps + 1):
-            action = self.agent.get_action(state, self._train_step)
-            next_state, reward, done, info = self.train_env.step(action)
-            self._train_step += 1
-
-            self.agent.env_buffer.push(
-                (
-                    state,
-                    action,
-                    reward,
-                    next_state,
-                    False if info.get("TimeLimit.truncated", False) else done,
-                )
-            )
-
-            self.agent.update(self._train_step)
-
-            if (self._train_step) % self.cfg.eval_episode_interval == 0:
-                self._eval()
-
-            if (
-                self.cfg.save_snapshot
-                and (self._train_step) % self.cfg.save_snapshot_interval == 0
+        with progress_bar as p:
+            for _ in p.track(
+                range(1, self.cfg.num_train_steps - self.cfg.explore_steps + 1)
             ):
-                self.save_snapshot()
+                action = self.agent.get_action(state, self._train_step)
+                next_state, reward, done, info = self.train_env.step(action)
+                self._train_step += 1
 
-            if done:
-                self._train_episode += 1
-                print(
-                    "TRAIN Episode: {}, total numsteps: {}, return: {}".format(
-                        self._train_episode,
-                        self._train_step,
-                        round(info["episode"]["r"], 2),
+                self.agent.env_buffer.push(
+                    (
+                        state,
+                        action,
+                        reward,
+                        next_state,
+                        False if info.get("TimeLimit.truncated", False) else done,
                     )
                 )
-                episode_metrics = dict()
-                episode_metrics["train/length"] = info["episode"]["l"]
-                episode_metrics["train/return"] = info["episode"]["r"]
-                episode_metrics["FPS"] = info["episode"]["l"] / (
-                    time.time() - episode_start_time
-                )
-                # episode_metrics["env_buffer_length"] = len(self.agent.env_buffer)
-                logger.record_step("env_steps", self._train_step)
-                for k, v in episode_metrics.items():
-                    logger.record_tabular(k, v)
-                logger.dump_tabular()
 
-                state, done, episode_start_time = (
-                    self.train_env.reset(),
-                    False,
-                    time.time(),
-                )
-            else:
-                state = next_state
+                self.agent.update(self._train_step)
+
+                if (self._train_step) % self.cfg.eval_episode_interval == 0:
+                    self._eval()
+
+                if (
+                    self.cfg.save_snapshot
+                    and (self._train_step) % self.cfg.save_snapshot_interval == 0
+                ):
+                    self.save_snapshot()
+
+                if done:
+                    self._train_episode += 1
+                    if self.verbose >= 2:
+                        print(
+                            "TRAIN Episode: {}, total numsteps: {}, return: {}".format(
+                                self._train_episode,
+                                self._train_step,
+                                round(info["episode"]["r"], 2),
+                            )
+                        )
+                    episode_metrics = dict()
+                    episode_metrics["train/length"] = info["episode"]["l"]
+                    episode_metrics["train/return"] = info["episode"]["r"]
+                    episode_metrics["FPS"] = info["episode"]["l"] / (
+                        time.time() - episode_start_time
+                    )
+                    # episode_metrics["env_buffer_length"] = len(self.agent.env_buffer)
+                    logger.record_step("env_steps", self._train_step)
+                    for k, v in episode_metrics.items():
+                        logger.record_tabular(k, v)
+                    logger.dump_tabular()
+
+                    state, done, episode_start_time = (
+                        self.train_env.reset(),
+                        False,
+                        time.time(),
+                    )
+                else:
+                    state = next_state
 
         self.train_env.close()
 
@@ -129,13 +155,14 @@ class MujocoWorkspace:
             returns += info["episode"]["r"]
             steps += info["episode"]["l"]
 
-            print(
-                "EVAL Episode: {}, total numsteps: {}, return: {}".format(
-                    self._train_episode,
-                    self._train_step,
-                    round(info["episode"]["r"], 2),
+            if self.verbose >= 1:
+                print(
+                    "EVAL Episode: {}, total numsteps: {}, return: {}".format(
+                        self._train_episode,
+                        self._train_step,
+                        round(info["episode"]["r"], 2),
+                    )
                 )
-            )
 
         eval_metrics = dict()
         eval_metrics["return"] = returns / self.cfg.num_eval_episodes

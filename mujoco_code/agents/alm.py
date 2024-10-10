@@ -501,6 +501,12 @@ class AlmAgent(object):
             bisimilarity = r_dist + self.bisim_gamma * transition_dist
 
             bisim_loss = F.mse_loss(z_dist, bisimilarity)
+
+            metrics["z_dist"] = z_dist.mean().item()
+            metrics["r_dist"] = r_dist.mean().item()
+            metrics["transition_dist"] = transition_dist.mean().item()
+            metrics["bisimilarity"] = bisimilarity.mean().item()
+
             return bisim_loss, None
 
         if "op" in self.aux:

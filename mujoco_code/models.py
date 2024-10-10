@@ -1,7 +1,7 @@
-from typing import Optional, Tuple, Type
+from typing import Optional, Tuple
 import torch
 import torch.nn as nn
-import torch.nn.utils.parametrizations as param_utils
+from torch.nn.utils.parametrizations import spectral_norm
 import torch.nn.functional as F
 import torch.distributions as td
 import numpy as np
@@ -289,28 +289,27 @@ class BisimCritic(nn.Module):
         z_dim: int,
         a_dim: int,
         hidden_dim: int,
-        activation: Type[nn.Module] = nn.ReLU,
     ):
         super().__init__()
 
         self.arg_net = nn.Sequential(
-            param_utils.spectral_norm(nn.Linear(z_dim, hidden_dim)),
-            activation(),
-            param_utils.spectral_norm(nn.Linear(hidden_dim, hidden_dim)),
-            activation(),
+            spectral_norm(nn.Linear(z_dim, hidden_dim)),
+            nn.ReLU(),
+            spectral_norm(nn.Linear(hidden_dim, hidden_dim)),
+            nn.ReLU(),
         )
         self.cond_net = nn.Sequential(
             nn.Linear(2 * (z_dim + a_dim), hidden_dim),
-            activation(),
+            nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
-            activation(),
+            nn.ReLU(),
         )
         self.combine_net = nn.Sequential(
-            param_utils.spectral_norm(nn.Linear(2 * hidden_dim, hidden_dim)),
-            activation(),
-            param_utils.spectral_norm(nn.Linear(hidden_dim, hidden_dim)),
-            activation(),
-            param_utils.spectral_norm(nn.Linear(hidden_dim, 1)),
+            spectral_norm(nn.Linear(2 * hidden_dim, hidden_dim)),
+            nn.ReLU(),
+            spectral_norm(nn.Linear(hidden_dim, hidden_dim)),
+            nn.ReLU(),
+            spectral_norm(nn.Linear(hidden_dim, 1)),
         )
 
     def forward(
@@ -323,5 +322,4 @@ class BisimCritic(nn.Module):
     ) -> torch.Tensor:
         arg = self.arg_net(zk)
         cond = self.cond_net(torch.cat([zi, ai, zj, aj], -1))
-        x = self.combine_net(torch.cat([arg, cond], -1))
-        return x
+        return self.combine_net(torch.cat([arg, cond], -1))

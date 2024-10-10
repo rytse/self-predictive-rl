@@ -444,7 +444,7 @@ class AlmAgent(object):
             action_batch[idxs_j],
         )
 
-        return torch.mean(critique_i - critique_j)  # signed!
+        return -torch.mean(critique_i - critique_j)  # signed!
 
     def _aux_loss(
         self,

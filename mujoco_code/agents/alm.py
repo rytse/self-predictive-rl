@@ -315,9 +315,9 @@ class AlmAgent(object):
             metrics["alm_loss"] = alm_loss.item()
             metrics["model_grad_norm"] = model_grad_norm.item()
 
-            metrics["aux_loss"] = aux_loss.item()
+            metrics["aux_loss"] = aux_loss.mean().item()
             if self.aux == "bisim_critic":
-                metrics["bisim_critic_loss"] = bisim_critic_loss.item()
+                metrics["bisim_critic_loss"] = bisim_critic_loss.mean().item()
 
         if self.aux_constraint is not None:
             assert aux_loss is not None

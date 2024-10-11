@@ -94,7 +94,7 @@ class AlmAgent(object):
         hidden_dims: int,
         model_hidden_dims: int,
     ) -> None:
-        if self.aux in [None, "l2", "op-l2", "bisim_critic"]:
+        if self.aux in [None, "l2", "op-l2"]:
             EncoderClass, ModelClass = DetEncoder, DetModel
         else:  # fkl, rkl, op-kl
             EncoderClass, ModelClass = StoEncoder, StoModel

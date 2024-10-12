@@ -1,7 +1,6 @@
 FROM pytorch/pytorch:2.4.1-cuda11.8-cudnn9-runtime
 
 WORKDIR /workspace
-ADD environment.yml /workspace
 
 # System dependencies
 RUN apt-get update && apt-get install -y \
@@ -13,6 +12,8 @@ RUN apt-get update && apt-get install -y \
     zsh \
     swig \
     libosmesa6-dev \
+    patchelf \
+    htop \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git config --global user.email "ryantse100@gmail.com"
@@ -44,6 +45,9 @@ RUN rm mujoco210-linux-x86_64.tar.gz
 RUN echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/root/.mujoco/mujoco210/bin" >> ~/.bashrc
 RUN echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/root/.mujoco/mujoco210/bin" >> ~/.zshrc
 
+# Clone repo
+RUN git clone https://github.com/rytse/self-predictive-rl.git /workspace
+
 # Set up python env
-RUN mamba env create -f environment.yml
+RUN mamba env create -f /workspace/mujoco_code/environment.yml
 RUN mamba init

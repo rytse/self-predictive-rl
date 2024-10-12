@@ -28,10 +28,7 @@ class MujocoWorkspace:
         self.set_seed()
         self.train_env, self.eval_env = make_env(self.cfg)
         self.agent = make_agent(self.train_env, self.device, self.cfg)
-        self.verbose = cfg.get(
-            "verbose"
-        )  # 0: no print, 1: eval print, 2: train + eval print
-        self.verbose = self.verbose if self.verbose is not None else 1
+        self.verbose = cfg.verbose  # 0: no print, 1: eval print, 2: train + eval print
         self._train_step = 0
         self._train_episode = 0
         self._best_eval_returns = -np.inf

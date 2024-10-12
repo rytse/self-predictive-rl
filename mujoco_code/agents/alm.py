@@ -34,8 +34,8 @@ class AlmAgent(object):
         self.online_encoder_actorcritic = cfg.online_encoder_actorcritic
 
         # bisim
-        self.bisim_gamma = cfg.get("bisim_gamma", 0.1)
-        self.bisim_critic_train_steps = cfg.get("bisim_critic_train_steps", 5)
+        self.bisim_gamma = cfg.bisim_gamma
+        self.bisim_critic_train_steps = cfg.bisim_critic_train_steps
 
         # aux
         self.aux = cfg.aux
@@ -320,7 +320,6 @@ class AlmAgent(object):
                 metrics["bisim_critic_loss"] = bisim_critic_loss.mean().item()
 
         if self.aux_constraint is not None:
-            assert aux_loss is not None
             self.coef_opt.zero_grad()
             coef_loss = self.aux_coef_log.exp() * (
                 self.aux_constraint - aux_loss.mean().item()

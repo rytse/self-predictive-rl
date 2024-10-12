@@ -7,8 +7,8 @@ __pycache__/
 
 
 # logs, a soft link to disk
-logs
-logs/
+#logs
+#logs/
 data/
 debug/
 plts/

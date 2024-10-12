@@ -74,8 +74,6 @@ def main(cfg: DictConfig):
     with open(os.path.join(log_path, "flags.yml"), "w") as f:
         OmegaConf.save(cfg, f)
 
-    torch.set_float32_matmul_precision("medium")
-
     workspace = W(cfg)
     workspace.train()
 

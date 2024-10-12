@@ -40,8 +40,7 @@ class MujocoWorkspace:
         random.seed(self.cfg.seed)
         np.random.seed(self.cfg.seed)
         torch.manual_seed(self.cfg.seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(self.cfg.seed)
+        torch.cuda.manual_seed_all(self.cfg.seed)
 
     def train(self):
         progress_bar = Progress(

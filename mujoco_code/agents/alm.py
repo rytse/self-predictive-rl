@@ -107,17 +107,14 @@ class AlmAgent(object):
         )
         utils.hard_update(self.encoder_target, self.encoder)
 
-        self.model = torch.compile(
-            ModelClass(
-                latent_dims,
-                num_actions,
-                model_hidden_dims,
-                obs_dims=(
-                    num_states if self.aux is not None and "op" in self.aux else None
-                ),  # learn ZP or OP
-            ).to(self.device),
-            mode="default",
-        )
+        self.model = ModelClass(
+            latent_dims,
+            num_actions,
+            model_hidden_dims,
+            obs_dims=(
+                num_states if self.aux is not None and "op" in self.aux else None
+            ),  # learn ZP or OP
+        ).to(self.device)
 
         self.critic = Critic(latent_dims, hidden_dims, num_actions).to(self.device)
         self.critic_target = Critic(latent_dims, hidden_dims, num_actions).to(
@@ -126,17 +123,13 @@ class AlmAgent(object):
         utils.hard_update(self.critic_target, self.critic)
 
         if self.aux == "bisim_critic":
-            self.bisim_critic = torch.compile(
-                BisimCritic(latent_dims, num_actions, hidden_dims).to(self.device),
-                mode="default",
+            self.bisim_critic = BisimCritic(latent_dims, num_actions, hidden_dims).to(
+                self.device
             )
 
-        self.actor = torch.compile(
-            Actor(
-                latent_dims, hidden_dims, num_actions, self.action_low, self.action_high
-            ).to(self.device),
-            mode="default",
-        )
+        self.actor = Actor(
+            latent_dims, hidden_dims, num_actions, self.action_low, self.action_high
+        ).to(self.device)
 
         self.world_model_list = [self.model, self.encoder]
         self.actor_list = [self.actor]
@@ -146,13 +139,11 @@ class AlmAgent(object):
             assert self.seq_len == 1
             assert self.disable_svg == True
         else:
-            self.reward = torch.compile(
-                RewardPrior(latent_dims, hidden_dims, num_actions).to(self.device),
-                mode="default",
+            self.reward = RewardPrior(latent_dims, hidden_dims, num_actions).to(
+                self.device
             )
-            self.classifier = torch.compile(
-                Discriminator(latent_dims, hidden_dims, num_actions).to(self.device),
-                mode="default",
+            self.classifier = Discriminator(latent_dims, hidden_dims, num_actions).to(
+                self.device
             )
             self.reward_list = [self.reward, self.classifier]
 
@@ -194,7 +185,6 @@ class AlmAgent(object):
             return self.aux_coef
         return self.aux_coef_log.exp().item()
 
-    # @torch.compile
     def get_action(
         self, state: npt.NDArray, step: int, eval: bool = False
     ) -> npt.NDArray:
@@ -212,7 +202,6 @@ class AlmAgent(object):
 
         return action.cpu().numpy()[0]
 
-    # @torch.compile
     def get_representation(self, state: npt.NDArray) -> npt.NDArray:
         with torch.no_grad():
             state = torch.FloatTensor(state).to(self.device)
@@ -220,7 +209,6 @@ class AlmAgent(object):
 
         return z.cpu().numpy()
 
-    # @torch.compile
     def get_lower_bound(self, state_batch, action_batch):
         with torch.no_grad():
             z_batch = self.encoder_target(state_batch).sample()
@@ -243,7 +231,6 @@ class AlmAgent(object):
             lower_bound = torch.sum(discount * returns, dim=0)
         return lower_bound.cpu().numpy()
 
-    # @torch.compile
     def _rollout_evaluation(
         self, z_batch: torch.Tensor, action_batch: torch.Tensor, std: float
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -344,7 +331,6 @@ class AlmAgent(object):
             if log:
                 metrics["coef"] = self.get_coef()
 
-    # @torch.compile
     def alm_loss(
         self,
         state_seq: torch.Tensor,
@@ -424,7 +410,6 @@ class AlmAgent(object):
         metrics["rank-1"] = rank1.item()
         metrics["cond"] = condition.item()
 
-    # @torch.compile
     def bisim_critic_loss(
         self,
         state_seq: torch.Tensor,
@@ -461,7 +446,6 @@ class AlmAgent(object):
 
         return -torch.mean(critique_i - critique_j)  # signed!
 
-    # @torch.compile
     def _aux_loss(
         self,
         z_batch: torch.Tensor,
@@ -579,7 +563,6 @@ class AlmAgent(object):
 
         return distance, z_next_prior_dist.rsample()
 
-    # @torch.compile
     def _alm_reward_loss(
         self,
         z_batch: torch.Tensor,
@@ -673,7 +656,6 @@ class AlmAgent(object):
         if log:
             metrics["reward_grad_norm"] = reward_grad_norm.mean().item()
 
-    # @torch.compile
     def _extrinsic_reward_loss(
         self,
         z_batch: torch.Tensor,
@@ -693,7 +675,6 @@ class AlmAgent(object):
 
         return reward_loss
 
-    # @torch.compile
     def _intrinsic_reward_loss(
         self,
         z: torch.Tensor,
@@ -757,7 +738,6 @@ class AlmAgent(object):
             metrics["critic_loss"] = critic_loss.item()
             metrics["critic_grad_norm"] = critic_grad_norm.mean().item()
 
-    # @torch.compile
     def _critic_loss(
         self,
         z_batch: torch.Tensor,
@@ -806,7 +786,6 @@ class AlmAgent(object):
         if log:
             metrics["actor_grad_norm"] = actor_grad_norm.mean().item()
 
-    # @torch.compile
     def _actor_loss(
         self, z_batch: torch.Tensor, std: float, detach_qz: bool, detach_action: bool
     ) -> torch.Tensor:
@@ -822,7 +801,6 @@ class AlmAgent(object):
         actor_loss = -Q.mean()
         return actor_loss
 
-    # @torch.compile
     def _lambda_svg_loss(
         self, z_batch: torch.Tensor, std: float, log: bool, metrics: Dict[str, Any]
     ) -> torch.Tensor:
@@ -867,7 +845,6 @@ class AlmAgent(object):
 
         return actor_loss
 
-    # @torch.compile
     def _rollout_imagination(
         self, z_batch: torch.Tensor, std: float
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -912,7 +889,6 @@ class AlmAgent(object):
         self.actor.load_state_dict(saved_dict["actor"])
 
 
-@torch.compile
 def lambda_returns(
     reward: torch.Tensor,
     discount: torch.Tensor,

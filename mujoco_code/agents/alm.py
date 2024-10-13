@@ -447,8 +447,6 @@ class AlmAgent(object):
         idxs_i = torch.randperm(self.batch_size)
         idxs_j = torch.arange(0, self.batch_size)
 
-        assert isinstance(z_next_dist, utils.Dirac)
-
         critique_i = self.bisim_critic(
             z_next_dist.mean[idxs_i],
             z_batch[idxs_i],
@@ -515,7 +513,6 @@ class AlmAgent(object):
             )
 
             if "critic" in self.aux:
-                assert isinstance(z_next_dist, utils.Dirac)
                 critique_i = self.bisim_critic(
                     z_next_dist.mean[idxs_i],
                     z_batch[idxs_i],
@@ -534,7 +531,6 @@ class AlmAgent(object):
                     critique_i, critique_j, reduction="none"
                 )
             else:
-                assert isinstance(z_next_dist, td.Normal)
                 transition_dist = torch.sqrt(
                     (z_next_dist.mean[idxs_i] - z_next_dist.mean[idxs_j]).pow(2)
                     + (z_next_dist.stddev[idxs_i] - z_next_dist.stddev[idxs_j]).pow(2)

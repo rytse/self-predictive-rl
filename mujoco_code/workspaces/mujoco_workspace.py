@@ -26,6 +26,12 @@ class MujocoWorkspace:
         if self.cfg.save_snapshot:
             self.checkpoint_path = self.work_dir / "checkpoints"
             self.checkpoint_path.mkdir(exist_ok=True)
+
+        if "cuda" in cfg.device and not torch.cuda.is_available():
+            raise ValueError(
+                "Run config specifies a cuda device, but no GPU is available."
+            )
+
         self.device = torch.device(cfg.device)
         self.set_seed()
         self.train_env, self.eval_env = make_env(self.cfg)

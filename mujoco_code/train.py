@@ -7,6 +7,7 @@ if "SLURM_JOB_ID" in os.environ:
 else:
     jobid = pid
 
+import torch
 from utils import logger, system
 from omegaconf import DictConfig, OmegaConf
 import hydra
@@ -71,6 +72,8 @@ def main(cfg: DictConfig):
     # write config to a yml
     with open(os.path.join(log_path, "flags.yml"), "w") as f:
         OmegaConf.save(cfg, f)
+
+    torch.set_float32_matmul_precision("medium")
 
     workspace = W(cfg)
     workspace.train()

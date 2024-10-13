@@ -94,7 +94,7 @@ class AlmAgent(object):
         hidden_dims: int,
         model_hidden_dims: int,
     ) -> None:
-        if self.aux in [None, "l2", "op-l2"]:
+        if self.aux in [None, "l2", "op-l2", "bisim_critic"]:
             EncoderClass, ModelClass = DetEncoder, DetModel
         else:  # fkl, rkl, op-kl
             EncoderClass, ModelClass = StoEncoder, StoModel
@@ -429,14 +429,14 @@ class AlmAgent(object):
         idxs_j = torch.arange(0, self.batch_size)
 
         critique_i = self.bisim_critic(
-            next_z_dists.mean[idxs_i],
+            next_z_dists.loc[idxs_i],
             z_batch[idxs_i],
             action_batch[idxs_i],
             z_batch[idxs_j],
             action_batch[idxs_j],
         )
         critique_j = self.bisim_critic(
-            next_z_dists.mean[idxs_j],
+            next_z_dists.loc[idxs_j],
             z_batch[idxs_i],
             action_batch[idxs_i],
             z_batch[idxs_j],
@@ -475,14 +475,14 @@ class AlmAgent(object):
 
             if "critic" in self.aux:
                 critique_i = self.bisim_critic(
-                    next_z_dists.mean[idxs_i],
+                    next_z_dists.loc[idxs_i],
                     z_batch[idxs_i],
                     action_batch[idxs_i],
                     z_batch[idxs_j],
                     action_batch[idxs_j],
                 )
                 critique_j = self.bisim_critic(
-                    next_z_dists.mean[idxs_j],
+                    next_z_dists.loc[idxs_j],
                     z_batch[idxs_i],
                     action_batch[idxs_i],
                     z_batch[idxs_j],

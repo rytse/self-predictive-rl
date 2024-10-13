@@ -36,6 +36,7 @@ class AlmAgent(object):
         # bisim
         self.bisim_gamma = cfg.bisim_gamma
         self.bisim_critic_train_steps = cfg.bisim_critic_train_steps
+        self.bisim_z_dist_scalarize = cfg.bisim_z_dist_scalarize
 
         # aux
         self.aux = cfg.aux
@@ -409,6 +410,18 @@ class AlmAgent(object):
         metrics["rank-1"] = rank1.item()
         metrics["cond"] = condition.item()
 
+    def _get_z_next_dist(self, next_state_batch: torch.Tensor) -> td.Distribution:
+        if self.aux_optim == "ema":
+            with torch.no_grad():
+                return self.encoder_target(next_state_batch)  # p(z' | s')
+        elif self.aux_optim == "detach":
+            with torch.no_grad():
+                return self.encoder(next_state_batch)  # p(z' | s')
+        elif self.aux_optim == "online":
+            return self.encoder(next_state_batch)  # p(z' | s')
+        else:
+            raise ValueError(self.aux_optim)
+
     def bisim_critic_loss(
         self,
         state_seq: torch.Tensor,
@@ -421,22 +434,20 @@ class AlmAgent(object):
         z_batch = z_dist.rsample()  # z (B, Z)
         action_batch = action_seq[0]
         next_state_batch = next_state_seq[0]
-
-        with torch.no_grad():
-            next_z_dists = self.encoder(next_state_batch)
+        z_next_dist = self._get_z_next_dist(next_state_batch)
 
         idxs_i = torch.randperm(self.batch_size)
         idxs_j = torch.arange(0, self.batch_size)
 
         critique_i = self.bisim_critic(
-            next_z_dists.loc[idxs_i],
+            z_next_dist.loc[idxs_i],
             z_batch[idxs_i],
             action_batch[idxs_i],
             z_batch[idxs_j],
             action_batch[idxs_j],
         )
         critique_j = self.bisim_critic(
-            next_z_dists.loc[idxs_j],
+            z_next_dist.loc[idxs_j],
             z_batch[idxs_i],
             action_batch[idxs_i],
             z_batch[idxs_j],
@@ -454,64 +465,6 @@ class AlmAgent(object):
         log: bool,
         metrics: Dict[str, Any],
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        if "bisim" in self.aux:
-            with torch.no_grad():
-                next_z_dists = self.encoder(next_state_batch)
-
-            idxs_i = torch.randperm(self.batch_size)
-            idxs_j = torch.arange(0, self.batch_size)
-
-            z_dist = (
-                F.smooth_l1_loss(
-                    z_batch[idxs_i],
-                    z_batch[idxs_j],
-                    reduction="none",
-                )
-                .mean(dim=-1)
-                .view(-1, 1)
-            )
-
-            r_dist = F.smooth_l1_loss(
-                reward_batch[idxs_i].view(-1, 1),
-                reward_batch[idxs_j].view(-1, 1),
-                reduction="none",
-            )
-
-            if "critic" in self.aux:
-                critique_i = self.bisim_critic(
-                    next_z_dists.loc[idxs_i],
-                    z_batch[idxs_i],
-                    action_batch[idxs_i],
-                    z_batch[idxs_j],
-                    action_batch[idxs_j],
-                )
-                critique_j = self.bisim_critic(
-                    next_z_dists.loc[idxs_j],
-                    z_batch[idxs_i],
-                    action_batch[idxs_i],
-                    z_batch[idxs_j],
-                    action_batch[idxs_j],
-                )
-                transition_dist = F.smooth_l1_loss(
-                    critique_i, critique_j, reduction="none"
-                )
-            else:
-                transition_dist = torch.sqrt(
-                    (next_z_dists.mean[idxs_i] - next_z_dists.mean[idxs_j]).pow(2)
-                    + (next_z_dists.stddev[idxs_i] - next_z_dists.stddev[idxs_j]).pow(2)
-                )
-
-            bisimilarity = r_dist + self.bisim_gamma * transition_dist
-
-            bisim_loss = F.mse_loss(z_dist, bisimilarity)
-
-            metrics["z_dist"] = z_dist.mean().item()
-            metrics["r_dist"] = r_dist.mean().item()
-            metrics["transition_dist"] = transition_dist.mean().item()
-            metrics["bisimilarity"] = bisimilarity.mean().item()
-
-            return bisim_loss, None
-
         if "op" in self.aux:
             next_state_pred = self.model(z_batch, action_batch)  # p_o(s' | z, a)
 
@@ -530,19 +483,64 @@ class AlmAgent(object):
             return distance, None
 
         z_next_prior_dist = self.model(z_batch, action_batch)  # p_z(z' | z, a)
+        z_next_dist = self._get_z_next_dist(next_state_batch)  # p(z' | s')
 
-        if self.aux_optim == "ema":
-            with torch.no_grad():
-                z_next_dist = self.encoder_target(next_state_batch)  # p(z' | s')
-        elif self.aux_optim == "detach":
-            with torch.no_grad():
-                z_next_dist = self.encoder(next_state_batch)  # p(z' | s')
-        elif self.aux_optim == "online":
-            z_next_dist = self.encoder(next_state_batch)  # p(z' | s')
-        else:
-            raise ValueError(self.aux_optim)
+        if "bisim" in self.aux:
+            idxs_i = torch.randperm(self.batch_size)
+            idxs_j = torch.arange(0, self.batch_size)
 
-        if self.aux == "l2":
+            z_dist = F.smooth_l1_loss(
+                z_batch[idxs_i],
+                z_batch[idxs_j],
+                reduction="none",
+            )
+
+            if self.bisim_z_dist_scalarize:
+                z_dist = z_dist.mean(dim=-1).view(-1, 1)
+
+            r_dist = F.smooth_l1_loss(
+                reward_batch[idxs_i].view(-1, 1),
+                reward_batch[idxs_j].view(-1, 1),
+                reduction="none",
+            )
+
+            if "critic" in self.aux:
+                assert isinstance(z_next_dist, utils.Dirac)
+                critique_i = self.bisim_critic(
+                    z_next_dist.loc[idxs_i],
+                    z_batch[idxs_i],
+                    action_batch[idxs_i],
+                    z_batch[idxs_j],
+                    action_batch[idxs_j],
+                )
+                critique_j = self.bisim_critic(
+                    z_next_dist.loc[idxs_j],
+                    z_batch[idxs_i],
+                    action_batch[idxs_i],
+                    z_batch[idxs_j],
+                    action_batch[idxs_j],
+                )
+                transition_dist = F.smooth_l1_loss(
+                    critique_i, critique_j, reduction="none"
+                )
+            else:
+                assert isinstance(z_next_dist, td.Normal)
+                transition_dist = torch.sqrt(
+                    (z_next_dist.mean[idxs_i] - z_next_dist.mean[idxs_j]).pow(2)
+                    + (z_next_dist.stddev[idxs_i] - z_next_dist.stddev[idxs_j]).pow(2)
+                )
+
+            bisimilarity = r_dist + self.bisim_gamma * transition_dist
+
+            if log:
+                metrics["z_dist"] = z_dist.mean().item()
+                metrics["r_dist"] = r_dist.mean().item()
+                metrics["transition_dist"] = transition_dist.mean().item()
+                metrics["bisimilarity"] = bisimilarity.mean().item()
+
+            distance = F.mse_loss(z_dist, bisimilarity)
+
+        elif self.aux == "l2":
             distance = ((z_next_dist.rsample() - z_next_prior_dist.rsample()) ** 2).sum(
                 -1, keepdim=True
             )  # (B, 1)

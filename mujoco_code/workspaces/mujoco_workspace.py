@@ -1,7 +1,9 @@
+from typing import Tuple
 import random
 import torch
 import time
 import numpy as np
+import numpy.typing as npt
 
 from rich.progress import (
     BarColumn,
@@ -55,67 +57,81 @@ class MujocoWorkspace:
         self._eval()
 
         state, done, episode_start_time = self.train_env.reset(), False, time.time()
+        training_iterator = range(
+            1, self.cfg.num_train_steps - self.cfg.explore_steps + 1
+        )
 
-        with progress_bar as p:
-            for _ in p.track(
-                range(1, self.cfg.num_train_steps - self.cfg.explore_steps + 1)
-            ):
-                action = self.agent.get_action(state, self._train_step)
-                next_state, reward, done, info = self.train_env.step(action)
-                self._train_step += 1
-
-                self.agent.env_buffer.push(
-                    (
-                        state,
-                        action,
-                        reward,
-                        next_state,
-                        False if info.get("TimeLimit.truncated", False) else done,
+        if not self.cfg.debug:
+            with progress_bar as p:
+                for _ in p.track(training_iterator):
+                    state, episode_start_time = self._train_iter(
+                        state, episode_start_time
                     )
-                )
-
-                self.agent.update(self._train_step)
-
-                if (self._train_step) % self.cfg.eval_episode_interval == 0:
-                    self._eval()
-
-                if (
-                    self.cfg.save_snapshot
-                    and (self._train_step) % self.cfg.save_snapshot_interval == 0
-                ):
-                    self.save_snapshot()
-
-                if done:
-                    self._train_episode += 1
-                    if self.verbose >= 2:
-                        print(
-                            "TRAIN Episode: {}, total numsteps: {}, return: {}".format(
-                                self._train_episode,
-                                self._train_step,
-                                round(info["episode"]["r"], 2),
-                            )
-                        )
-                    episode_metrics = dict()
-                    episode_metrics["train/length"] = info["episode"]["l"]
-                    episode_metrics["train/return"] = info["episode"]["r"]
-                    episode_metrics["FPS"] = info["episode"]["l"] / (
-                        time.time() - episode_start_time
-                    )
-                    # episode_metrics["env_buffer_length"] = len(self.agent.env_buffer)
-                    logger.record_step("env_steps", self._train_step)
-                    for k, v in episode_metrics.items():
-                        logger.record_tabular(k, v)
-                    logger.dump_tabular()
-
-                    state, done, episode_start_time = (
-                        self.train_env.reset(),
-                        False,
-                        time.time(),
-                    )
-                else:
-                    state = next_state
+        else:
+            for _ in training_iterator:
+                state, episode_start_time = self._train_iter(state, episode_start_time)
 
         self.train_env.close()
+
+    def _train_iter(
+        self, state: npt.NDArray, episode_start_time: float
+    ) -> Tuple[npt.NDArray, float]:
+        action = self.agent.get_action(state, self._train_step)
+        next_state, reward, done, info = self.train_env.step(action)
+        self._train_step += 1
+
+        self.agent.env_buffer.push(
+            (
+                state,
+                action,
+                reward,
+                next_state,
+                False if info.get("TimeLimit.truncated", False) else done,
+            )
+        )
+
+        self.agent.update(self._train_step)
+
+        if (self._train_step) % self.cfg.eval_episode_interval == 0:
+            self._eval()
+
+        if (
+            self.cfg.save_snapshot
+            and (self._train_step) % self.cfg.save_snapshot_interval == 0
+        ):
+            self.save_snapshot()
+
+        if done:
+            self._train_episode += 1
+            if self.verbose >= 2:
+                print(
+                    "TRAIN Episode: {}, total numsteps: {}, return: {}".format(
+                        self._train_episode,
+                        self._train_step,
+                        round(info["episode"]["r"], 2),
+                    )
+                )
+            episode_metrics = dict()
+            episode_metrics["train/length"] = info["episode"]["l"]
+            episode_metrics["train/return"] = info["episode"]["r"]
+            episode_metrics["FPS"] = info["episode"]["l"] / (
+                time.time() - episode_start_time
+            )
+            # episode_metrics["env_buffer_length"] = len(self.agent.env_buffer)
+            logger.record_step("env_steps", self._train_step)
+            for k, v in episode_metrics.items():
+                logger.record_tabular(k, v)
+            logger.dump_tabular()
+
+            state, done, episode_start_time = (
+                self.train_env.reset(),
+                False,
+                time.time(),
+            )
+        else:
+            state = next_state
+
+        return state, episode_start_time
 
     def _explore(self):
         state, done = self.train_env.reset(), False

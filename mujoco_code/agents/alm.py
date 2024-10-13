@@ -439,6 +439,8 @@ class AlmAgent(object):
         idxs_i = torch.randperm(self.batch_size)
         idxs_j = torch.arange(0, self.batch_size)
 
+        assert isinstance(z_next_dist, utils.Dirac)
+
         critique_i = self.bisim_critic(
             z_next_dist.loc[idxs_i],
             z_batch[idxs_i],

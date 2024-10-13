@@ -1,4 +1,5 @@
 import os
+import pdbr  # noqa
 
 pid = str(os.getpid())
 if "SLURM_JOB_ID" in os.environ:

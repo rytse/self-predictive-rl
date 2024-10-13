@@ -38,6 +38,7 @@ class AlmAgent(object):
         self.bisim_critic_train_steps = cfg.bisim_critic_train_steps
         self.bisim_z_dist_scalarize = cfg.bisim_z_dist_scalarize
         self.bisim_deterministic = cfg.bisim_deterministic
+        self.bisim_z_norm = cfg.bisim_z_norm
 
         # aux
         self.aux = cfg.aux
@@ -514,14 +515,21 @@ class AlmAgent(object):
             idxs_i = torch.randperm(self.batch_size)
             idxs_j = torch.arange(0, self.batch_size)
 
-            z_dist = F.smooth_l1_loss(
-                z_batch[idxs_i],
-                z_batch[idxs_j],
-                reduction="none",
-            )
-
-            if self.bisim_z_dist_scalarize:
-                z_dist = z_dist.mean(dim=-1).view(-1, 1)
+            if self.bisim_z_norm == "l2":
+                assert self.bisim_z_dist_scalarize
+                z_dist = torch.norm(z_batch[idxs_i] - z_batch[idxs_j], dim=-1).view(
+                    -1, 1
+                )
+            elif self.bisim_z_norm == "l1":
+                z_dist = F.smooth_l1_loss(
+                    z_batch[idxs_i],
+                    z_batch[idxs_j],
+                    reduction="none",
+                )
+                if self.bisim_z_dist_scalarize:
+                    z_dist = z_dist.mean(dim=-1).view(-1, 1)
+            else:
+                raise ValueError("Invalid bisim_z_norm")
 
             r_dist = F.smooth_l1_loss(
                 reward_batch[idxs_i].view(-1, 1),

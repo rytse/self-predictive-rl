@@ -79,12 +79,17 @@ class TruncatedNormal(td.Normal):
         return self._clamp(x)
 
 
+# TODO see if we can replace with td.Normal(loc, 0), profile
 class Dirac:
-    def __init__(self, loc):
+    def __init__(self, loc: torch.Tensor):
         self.loc = loc  # a tensor
 
-    def sample(self):
+    def sample(self) -> torch.Tensor:
         return self.loc.detach()
 
-    def rsample(self):
+    def rsample(self) -> torch.Tensor:
+        return self.loc
+
+    @property
+    def mean(self) -> torch.Tensor:
         return self.loc

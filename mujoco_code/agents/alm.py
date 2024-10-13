@@ -461,10 +461,14 @@ class AlmAgent(object):
             idxs_i = torch.randperm(self.batch_size)
             idxs_j = torch.arange(0, self.batch_size)
 
-            z_dist = F.smooth_l1_loss(
-                z_batch[idxs_i],
-                z_batch[idxs_j],
-                reduction="none",
+            z_dist = (
+                F.smooth_l1_loss(
+                    z_batch[idxs_i],
+                    z_batch[idxs_j],
+                    reduction="none",
+                )
+                .mean(dim=-1)
+                .view(-1, 1)
             )
 
             r_dist = F.smooth_l1_loss(

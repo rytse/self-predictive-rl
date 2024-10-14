@@ -19,6 +19,8 @@ class AlmAgent(object):
         device: torch.device,
         action_low: float,
         action_high: float,
+        reward_low: float,
+        reward_high: float,
         num_states: int,
         num_actions: int,
         env_buffer_size: int,
@@ -27,6 +29,8 @@ class AlmAgent(object):
         self.device = device
         self.action_low = action_low
         self.action_high = action_high
+        self.reward_low = reward_low
+        self.reward_high = reward_high
 
         # key hparams
         self.disable_svg = cfg.disable_svg
@@ -87,6 +91,7 @@ class AlmAgent(object):
             cfg.latent_dims,
             cfg.hidden_dims,
             cfg.model_hidden_dims,
+            cfg.norm_encoder,
         )
         self._init_optims(cfg.lr)
 
@@ -97,6 +102,7 @@ class AlmAgent(object):
         latent_dims: int,
         hidden_dims: int,
         model_hidden_dims: int,
+        norm_encoder: bool,
     ) -> None:
 
         if "bisim" in self.aux:
@@ -110,12 +116,12 @@ class AlmAgent(object):
             else:  # fkl, rkl, op-kl
                 EncoderClass, ModelClass = StoEncoder, StoModel
 
-        self.encoder = EncoderClass(num_states, hidden_dims, latent_dims).to(
-            self.device
-        )
-        self.encoder_target = EncoderClass(num_states, hidden_dims, latent_dims).to(
-            self.device
-        )
+        self.encoder = EncoderClass(
+            num_states, hidden_dims, latent_dims, norm_encoder
+        ).to(self.device)
+        self.encoder_target = EncoderClass(
+            num_states, hidden_dims, latent_dims, norm_encoder
+        ).to(self.device)
         utils.hard_update(self.encoder_target, self.encoder)
 
         self.model = torch.compile(
@@ -492,7 +498,6 @@ class AlmAgent(object):
         Calculates the components of the bisim loss. This is separated from aux_loss so that it can be `torch.compile`d without worrying about logging.
 
         """
-        z_next_prior_dist = self.model(z_batch, action_batch)  # p_z(z' | z, a)
         z_next_dist = self._get_z_next_dist(next_state_batch)  # p(z' | s')
 
         idxs_i = torch.randperm(self.batch_size)
@@ -514,12 +519,14 @@ class AlmAgent(object):
 
         if self.bisim_z_norm == "l2":
             r_dist = torch.abs(reward_batch[idxs_i] - reward_batch[idxs_j]).view(-1, 1)
+            r_dist_normed = r_dist / (self.reward_high - self.reward_low)
         else:
             r_dist = F.smooth_l1_loss(
                 reward_batch[idxs_i].view(-1, 1),
                 reward_batch[idxs_j].view(-1, 1),
                 reduction="none",
             )
+            r_dist_normed = r_dist / (self.reward_high - self.reward_low)
 
         if "critic" in self.aux:
             critique_i = self.bisim_critic(
@@ -539,17 +546,22 @@ class AlmAgent(object):
 
             if self.bisim_z_norm == "l2":
                 transition_dist = torch.abs(critique_i - critique_j).view(-1, 1)
+                transition_dist_normed = (
+                    transition_dist / 2.0
+                )  # if latent space is unit ball, then max dist is 2
             else:
                 transition_dist = F.smooth_l1_loss(
                     critique_i, critique_j, reduction="none"
                 )
+                transition_dist_normed = transition_dist / 2.0
         else:
             transition_dist = torch.sqrt(
                 (z_next_dist.mean[idxs_i] - z_next_dist.mean[idxs_j]).pow(2)
                 + (z_next_dist.stddev[idxs_i] - z_next_dist.stddev[idxs_j]).pow(2)
             )
+            transition_dist_normed = transition_dist / 2.0
 
-        return z_dist, r_dist, transition_dist
+        return z_dist, r_dist_normed, transition_dist_normed
 
     def _aux_loss(
         self,
@@ -582,7 +594,6 @@ class AlmAgent(object):
                 z_dist,
                 r_dist,
                 transition_dist,
-                z_next_prior_dist,
             ) = self.bisim_encoder_loss(
                 z_batch,
                 next_state_batch,

@@ -487,7 +487,7 @@ class AlmAgent(object):
         next_state_batch: torch.Tensor,
         action_batch: torch.Tensor,
         reward_batch: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Calculates the components of the bisim loss. This is separated from aux_loss so that it can be `torch.compile`d without worrying about logging.
 
@@ -549,7 +549,7 @@ class AlmAgent(object):
                 + (z_next_dist.stddev[idxs_i] - z_next_dist.stddev[idxs_j]).pow(2)
             )
 
-        return z_dist, r_dist, transition_dist, z_next_prior_dist
+        return z_dist, r_dist, transition_dist
 
     def _aux_loss(
         self,
@@ -589,6 +589,7 @@ class AlmAgent(object):
                 action_batch,
                 reward_batch,
             )
+            z_next_prior_sample = None
             bisimilarity = r_dist + self.bisim_gamma * transition_dist
 
             if log:
@@ -630,10 +631,12 @@ class AlmAgent(object):
 
             if log:
                 metrics[self.aux] = distance.mean().item()
-                metrics["prior_entropy"] = z_next_prior_dist.entropy().mean().item()
-                metrics["posterior_entropy"] = z_next_dist.entropy().mean().item()
+                # metrics["prior_entropy"] = z_next_prior_dist.entropy().mean().item()
+                # metrics["posterior_entropy"] = z_next_dist.entropy().mean().item()
 
-        return distance, z_next_prior_dist.rsample()
+            z_next_prior_sample = z_next_prior_dist.rsample()
+
+        return distance, z_next_prior_sample
 
     def _alm_reward_loss(
         self,

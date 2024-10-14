@@ -195,7 +195,7 @@ class AlmAgent(object):
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=lr["critic"])
 
         if self.aux == "bisim_critic":
-            self.bisim_critic_opt = torch.optim.Adam(
+            self.bisim_critic_opt = torch.optim.RMSprop(
                 self.bisim_critic.parameters(), lr=lr["model"]
             )
 

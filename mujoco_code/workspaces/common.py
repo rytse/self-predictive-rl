@@ -1,9 +1,12 @@
 import numpy as np
+from omegaconf import DictConfig
 import utils
 from utils import logger
+from gym import Env
+import torch
 
 
-def make_agent(env, device, cfg):
+def make_agent(env: Env, device: torch.device, cfg: DictConfig):
     if cfg.agent == "alm":
         from agents.alm import AlmAgent
 
@@ -11,6 +14,15 @@ def make_agent(env, device, cfg):
         num_actions = np.prod(env.action_space.shape)
         action_low = env.action_space.low[0]
         action_high = env.action_space.high[0]
+
+        reward_low = env.reward_range[0]
+        reward_high = env.reward_range[1]
+
+        if cfg.id == "BipedalWalker-v3":
+            reward_low = -200
+            reward_high = 400
+        elif reward_low == -np.inf or reward_high == np.inf:
+            raise NotImplementedError
 
         if cfg.id == "Humanoid-v2":
             cfg.env_buffer_size = 1000000
@@ -20,6 +32,8 @@ def make_agent(env, device, cfg):
             device,
             action_low,
             action_high,
+            reward_low,
+            reward_high,
             num_states,
             num_actions,
             buffer_size,

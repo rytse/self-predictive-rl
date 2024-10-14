@@ -477,7 +477,8 @@ class AlmAgent(object):
             action_batch[idxs_j],
         )
 
-        return -torch.mean(critique_i - critique_j)  # signed!
+        bisim_critic_loss = -torch.mean(critique_i - critique_j)  # signed!
+        return bisim_critic_loss
 
     @torch.compile
     def bisim_encoder_loss(
@@ -511,11 +512,14 @@ class AlmAgent(object):
         else:
             raise ValueError("Invalid bisim_z_norm")
 
-        r_dist = F.smooth_l1_loss(
-            reward_batch[idxs_i].view(-1, 1),
-            reward_batch[idxs_j].view(-1, 1),
-            reduction="none",
-        )
+        if self.bisim_z_norm == "l2":
+            r_dist = torch.abs(reward_batch[idxs_i] - reward_batch[idxs_j]).view(-1, 1)
+        else:
+            r_dist = F.smooth_l1_loss(
+                reward_batch[idxs_i].view(-1, 1),
+                reward_batch[idxs_j].view(-1, 1),
+                reduction="none",
+            )
 
         if "critic" in self.aux:
             critique_i = self.bisim_critic(
@@ -532,7 +536,13 @@ class AlmAgent(object):
                 z_batch[idxs_j],
                 action_batch[idxs_j],
             )
-            transition_dist = F.smooth_l1_loss(critique_i, critique_j, reduction="none")
+
+            if self.bisim_z_norm == "l2":
+                transition_dist = torch.abs(critique_i - critique_j).view(-1, 1)
+            else:
+                transition_dist = F.smooth_l1_loss(
+                    critique_i, critique_j, reduction="none"
+                )
         else:
             transition_dist = torch.sqrt(
                 (z_next_dist.mean[idxs_i] - z_next_dist.mean[idxs_j]).pow(2)
@@ -587,7 +597,10 @@ class AlmAgent(object):
                 metrics["transition_dist"] = transition_dist.mean().item()
                 metrics["bisimilarity"] = bisimilarity.mean().item()
 
-            distance = F.mse_loss(z_dist, bisimilarity)
+            if self.bisim_z_norm == "l2":
+                distance = torch.norm(z_dist - bisimilarity, dim=-1).view(-1, 1)
+            else:
+                distance = F.mse_loss(z_dist, bisimilarity)
         else:  # TODO simplify this. for now we do this to torch.compile(bisim_encoder_loss) nicely
             z_next_prior_dist = self.model(z_batch, action_batch)  # p_z(z' | z, a)
             z_next_dist = self._get_z_next_dist(next_state_batch)  # p(z' | s')

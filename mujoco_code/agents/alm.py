@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.distributions as td
 import torch.nn.functional as F
+from torch.linalg import matrix_rank, cond
 import numpy as np
 import numpy.typing as npt
 import utils
@@ -204,7 +205,6 @@ class AlmAgent(object):
             return self.aux_coef
         return self.aux_coef_log.exp().item()
 
-    # @torch.compile
     def get_action(
         self, state: npt.NDArray, step: int, eval: bool = False
     ) -> npt.NDArray:
@@ -222,7 +222,6 @@ class AlmAgent(object):
 
         return action.cpu().numpy()[0]
 
-    # @torch.compile
     def get_representation(self, state: npt.NDArray) -> npt.NDArray:
         with torch.no_grad():
             state = torch.FloatTensor(state).to(self.device)
@@ -230,8 +229,9 @@ class AlmAgent(object):
 
         return z.cpu().numpy()
 
-    # @torch.compile
-    def get_lower_bound(self, state_batch, action_batch):
+    def get_lower_bound(
+        self, state_batch: torch.Tensor, action_batch: torch.Tensor
+    ) -> npt.NDArray:
         with torch.no_grad():
             z_batch = self.encoder_target(state_batch).sample()
             z_seq, action_seq = self._rollout_evaluation(z_batch, action_batch, std=0.1)
@@ -253,14 +253,14 @@ class AlmAgent(object):
             lower_bound = torch.sum(discount * returns, dim=0)
         return lower_bound.cpu().numpy()
 
-    # @torch.compile
+    @torch.compile
     def _rollout_evaluation(
         self, z_batch: torch.Tensor, action_batch: torch.Tensor, std: float
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         z_seq = [z_batch]
         action_seq = [action_batch]
         with torch.no_grad():
-            for t in range(self.seq_len):
+            for _ in range(self.seq_len):
                 z_batch = self.model(z_batch, action_batch).sample()
 
                 action_dist = self.actor(z_batch.detach(), std)
@@ -353,7 +353,6 @@ class AlmAgent(object):
             if log:
                 metrics["coef"] = self.get_coef()
 
-    # @torch.compile
     def alm_loss(
         self,
         state_seq: torch.Tensor,
@@ -422,12 +421,11 @@ class AlmAgent(object):
         return alm_loss, aux_loss
 
     def _check_collapse(self, z_batch: torch.Tensor, metrics: Dict[str, Any]) -> None:
-        from torch.linalg import matrix_rank, cond
-
         rank3 = matrix_rank(z_batch, atol=1e-3, rtol=1e-3)
         rank2 = matrix_rank(z_batch, atol=1e-2, rtol=1e-2)
         rank1 = matrix_rank(z_batch, atol=1e-1, rtol=1e-1)
         condition = cond(z_batch)
+
         metrics["rank-3"] = rank3.item()
         metrics["rank-2"] = rank2.item()
         metrics["rank-1"] = rank1.item()
@@ -481,7 +479,68 @@ class AlmAgent(object):
 
         return -torch.mean(critique_i - critique_j)  # signed!
 
-    # @torch.compile
+    @torch.compile
+    def bisim_encoder_loss(
+        self,
+        z_batch: torch.Tensor,
+        next_state_batch: torch.Tensor,
+        action_batch: torch.Tensor,
+        reward_batch: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Calculates the components of the bisim loss. This is separated from aux_loss so that it can be `torch.compile`d without worrying about logging.
+
+        """
+        z_next_prior_dist = self.model(z_batch, action_batch)  # p_z(z' | z, a)
+        z_next_dist = self._get_z_next_dist(next_state_batch)  # p(z' | s')
+
+        idxs_i = torch.randperm(self.batch_size)
+        idxs_j = torch.arange(0, self.batch_size)
+
+        if self.bisim_z_norm == "l2":
+            assert self.bisim_z_dist_scalarize
+            z_dist = torch.norm(z_batch[idxs_i] - z_batch[idxs_j], dim=-1).view(-1, 1)
+        elif self.bisim_z_norm == "l1":
+            z_dist = F.smooth_l1_loss(
+                z_batch[idxs_i],
+                z_batch[idxs_j],
+                reduction="none",
+            )
+            if self.bisim_z_dist_scalarize:
+                z_dist = z_dist.mean(dim=-1).view(-1, 1)
+        else:
+            raise ValueError("Invalid bisim_z_norm")
+
+        r_dist = F.smooth_l1_loss(
+            reward_batch[idxs_i].view(-1, 1),
+            reward_batch[idxs_j].view(-1, 1),
+            reduction="none",
+        )
+
+        if "critic" in self.aux:
+            critique_i = self.bisim_critic(
+                z_next_dist.mean[idxs_i],
+                z_batch[idxs_i],
+                action_batch[idxs_i],
+                z_batch[idxs_j],
+                action_batch[idxs_j],
+            )
+            critique_j = self.bisim_critic(
+                z_next_dist.mean[idxs_j],
+                z_batch[idxs_i],
+                action_batch[idxs_i],
+                z_batch[idxs_j],
+                action_batch[idxs_j],
+            )
+            transition_dist = F.smooth_l1_loss(critique_i, critique_j, reduction="none")
+        else:
+            transition_dist = torch.sqrt(
+                (z_next_dist.mean[idxs_i] - z_next_dist.mean[idxs_j]).pow(2)
+                + (z_next_dist.stddev[idxs_i] - z_next_dist.stddev[idxs_j]).pow(2)
+            )
+
+        return z_dist, r_dist, transition_dist, z_next_prior_dist
+
     def _aux_loss(
         self,
         z_batch: torch.Tensor,
@@ -508,59 +567,18 @@ class AlmAgent(object):
 
             return distance, None
 
-        z_next_prior_dist = self.model(z_batch, action_batch)  # p_z(z' | z, a)
-        z_next_dist = self._get_z_next_dist(next_state_batch)  # p(z' | s')
-
         if "bisim" in self.aux:
-            idxs_i = torch.randperm(self.batch_size)
-            idxs_j = torch.arange(0, self.batch_size)
-
-            if self.bisim_z_norm == "l2":
-                assert self.bisim_z_dist_scalarize
-                z_dist = torch.norm(z_batch[idxs_i] - z_batch[idxs_j], dim=-1).view(
-                    -1, 1
-                )
-            elif self.bisim_z_norm == "l1":
-                z_dist = F.smooth_l1_loss(
-                    z_batch[idxs_i],
-                    z_batch[idxs_j],
-                    reduction="none",
-                )
-                if self.bisim_z_dist_scalarize:
-                    z_dist = z_dist.mean(dim=-1).view(-1, 1)
-            else:
-                raise ValueError("Invalid bisim_z_norm")
-
-            r_dist = F.smooth_l1_loss(
-                reward_batch[idxs_i].view(-1, 1),
-                reward_batch[idxs_j].view(-1, 1),
-                reduction="none",
+            (
+                z_dist,
+                r_dist,
+                transition_dist,
+                z_next_prior_dist,
+            ) = self.bisim_encoder_loss(
+                z_batch,
+                next_state_batch,
+                action_batch,
+                reward_batch,
             )
-
-            if "critic" in self.aux:
-                critique_i = self.bisim_critic(
-                    z_next_dist.mean[idxs_i],
-                    z_batch[idxs_i],
-                    action_batch[idxs_i],
-                    z_batch[idxs_j],
-                    action_batch[idxs_j],
-                )
-                critique_j = self.bisim_critic(
-                    z_next_dist.mean[idxs_j],
-                    z_batch[idxs_i],
-                    action_batch[idxs_i],
-                    z_batch[idxs_j],
-                    action_batch[idxs_j],
-                )
-                transition_dist = F.smooth_l1_loss(
-                    critique_i, critique_j, reduction="none"
-                )
-            else:
-                transition_dist = torch.sqrt(
-                    (z_next_dist.mean[idxs_i] - z_next_dist.mean[idxs_j]).pow(2)
-                    + (z_next_dist.stddev[idxs_i] - z_next_dist.stddev[idxs_j]).pow(2)
-                )
-
             bisimilarity = r_dist + self.bisim_gamma * transition_dist
 
             if log:
@@ -570,23 +588,32 @@ class AlmAgent(object):
                 metrics["bisimilarity"] = bisimilarity.mean().item()
 
             distance = F.mse_loss(z_dist, bisimilarity)
+        else:  # TODO simplify this. for now we do this to torch.compile(bisim_encoder_loss) nicely
+            z_next_prior_dist = self.model(z_batch, action_batch)  # p_z(z' | z, a)
+            z_next_dist = self._get_z_next_dist(next_state_batch)  # p(z' | s')
 
-        elif self.aux == "l2":
-            distance = ((z_next_dist.rsample() - z_next_prior_dist.rsample()) ** 2).sum(
-                -1, keepdim=True
-            )  # (B, 1)
-            if log:
-                metrics["l2"] = distance.mean().item()
+            if self.aux == "l2":
+                distance = (
+                    (z_next_dist.rsample() - z_next_prior_dist.rsample()) ** 2
+                ).sum(
+                    -1, keepdim=True
+                )  # (B, 1)
+                if log:
+                    metrics["l2"] = distance.mean().item()
 
-        else:  # fkl, rkl
-            if self.aux == "fkl":
-                distance = td.kl_divergence(z_next_dist, z_next_prior_dist).unsqueeze(
-                    -1
-                )  # (B, 1)
-            else:
-                distance = td.kl_divergence(z_next_prior_dist, z_next_dist).unsqueeze(
-                    -1
-                )  # (B, 1)
+            else:  # fkl, rkl
+                if self.aux == "fkl":
+                    distance = td.kl_divergence(
+                        z_next_dist, z_next_prior_dist
+                    ).unsqueeze(
+                        -1
+                    )  # (B, 1)
+                else:
+                    distance = td.kl_divergence(
+                        z_next_prior_dist, z_next_dist
+                    ).unsqueeze(
+                        -1
+                    )  # (B, 1)
 
             if log:
                 metrics[self.aux] = distance.mean().item()
@@ -595,7 +622,6 @@ class AlmAgent(object):
 
         return distance, z_next_prior_dist.rsample()
 
-    # @torch.compile
     def _alm_reward_loss(
         self,
         z_batch: torch.Tensor,
@@ -689,7 +715,6 @@ class AlmAgent(object):
         if log:
             metrics["reward_grad_norm"] = reward_grad_norm.mean().item()
 
-    # @torch.compile
     def _extrinsic_reward_loss(
         self,
         z_batch: torch.Tensor,
@@ -709,7 +734,6 @@ class AlmAgent(object):
 
         return reward_loss
 
-    # @torch.compile
     def _intrinsic_reward_loss(
         self,
         z: torch.Tensor,
@@ -773,7 +797,6 @@ class AlmAgent(object):
             metrics["critic_loss"] = critic_loss.item()
             metrics["critic_grad_norm"] = critic_grad_norm.mean().item()
 
-    # @torch.compile
     def _critic_loss(
         self,
         z_batch: torch.Tensor,
@@ -822,7 +845,7 @@ class AlmAgent(object):
         if log:
             metrics["actor_grad_norm"] = actor_grad_norm.mean().item()
 
-    # @torch.compile
+    @torch.compile
     def _actor_loss(
         self, z_batch: torch.Tensor, std: float, detach_qz: bool, detach_action: bool
     ) -> torch.Tensor:
@@ -838,7 +861,7 @@ class AlmAgent(object):
         actor_loss = -Q.mean()
         return actor_loss
 
-    # @torch.compile
+    @torch.compile
     def _lambda_svg_loss(
         self, z_batch: torch.Tensor, std: float, log: bool, metrics: Dict[str, Any]
     ) -> torch.Tensor:
@@ -883,7 +906,7 @@ class AlmAgent(object):
 
         return actor_loss
 
-    # @torch.compile
+    @torch.compile
     def _rollout_imagination(
         self, z_batch: torch.Tensor, std: float
     ) -> Tuple[torch.Tensor, torch.Tensor]:

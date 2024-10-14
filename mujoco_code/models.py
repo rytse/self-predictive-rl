@@ -295,20 +295,20 @@ class BisimCritic(nn.Module):
         self.arg_net = nn.Sequential(
             spectral_norm(nn.Linear(z_dim, hidden_dim)),
             nn.ReLU(),
-            spectral_norm(nn.Linear(hidden_dim, hidden_dim)),
-            nn.ReLU(),
+            # spectral_norm(nn.Linear(hidden_dim, hidden_dim)),
+            # nn.ReLU(),
         )
         self.cond_net = nn.Sequential(
             nn.Linear(2 * (z_dim + a_dim), hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            # nn.Linear(hidden_dim, hidden_dim),
+            # nn.ReLU(),
         )
         self.combine_net = nn.Sequential(
             spectral_norm(nn.Linear(2 * hidden_dim, hidden_dim)),
             nn.ReLU(),
-            spectral_norm(nn.Linear(hidden_dim, hidden_dim)),
-            nn.ReLU(),
+            # spectral_norm(nn.Linear(hidden_dim, hidden_dim)),
+            # nn.ReLU(),
             spectral_norm(nn.Linear(hidden_dim, 1)),
         )
 

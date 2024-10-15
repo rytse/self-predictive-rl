@@ -552,7 +552,7 @@ class AlmAgent(object):
             transition_dist_final = transition_dist
 
         bisimilarity = r_dist_final + self.bisim_gamma * transition_dist_final
-        bisim_loss = torch.norm(z_dist_final - bisimilarity, dim=-1).view(-1, 1)
+        bisim_loss = torch.square(z_dist_final - bisimilarity)
 
         return bisim_loss, z_dist_final, r_dist_final, transition_dist_final
 

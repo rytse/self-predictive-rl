@@ -37,6 +37,7 @@ class AlmAgent(object):
         self.disable_reward = cfg.disable_reward
         self.freeze_critic = cfg.freeze_critic
         self.online_encoder_actorcritic = cfg.online_encoder_actorcritic
+        self.norm_encoder = cfg.norm_encoder
 
         # bisim
         self.bisim_gamma = cfg.bisim_gamma
@@ -89,7 +90,6 @@ class AlmAgent(object):
             cfg.latent_dims,
             cfg.hidden_dims,
             cfg.model_hidden_dims,
-            cfg.norm_encoder,
         )
         self._init_optims(cfg.lr)
 
@@ -100,7 +100,6 @@ class AlmAgent(object):
         latent_dims: int,
         hidden_dims: int,
         model_hidden_dims: int,
-        norm_encoder: bool,
     ) -> None:
 
         if "bisim" in self.aux:
@@ -115,10 +114,10 @@ class AlmAgent(object):
                 EncoderClass, ModelClass = StoEncoder, StoModel
 
         self.encoder = EncoderClass(
-            num_states, hidden_dims, latent_dims, norm_encoder
+            num_states, hidden_dims, latent_dims, self.norm_encoder
         ).to(self.device)
         self.encoder_target = EncoderClass(
-            num_states, hidden_dims, latent_dims, norm_encoder
+            num_states, hidden_dims, latent_dims, self.norm_encoder
         ).to(self.device)
         utils.hard_update(self.encoder_target, self.encoder)
 

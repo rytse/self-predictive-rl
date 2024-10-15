@@ -508,7 +508,7 @@ class AlmAgent(object):
             critique_i = self.bisim_critic(
                 z_next_dist.mean[idxs_i],
                 z_batch[idxs_i],
-                action_batch[idxs_i], # TODO normalize action inputs?
+                action_batch[idxs_i],  # TODO normalize action inputs?
                 z_batch[idxs_j],
                 action_batch[idxs_j],
             )
@@ -526,11 +526,14 @@ class AlmAgent(object):
                 + (z_next_dist.stddev[idxs_i] - z_next_dist.stddev[idxs_j]).pow(2)
             )
 
-        # When the latent space is unit ball, the max dist is 2 (pole to pole)
-        transition_dist_normed = transition_dist / 2.0
-        r_dist_normed = r_dist / (self.reward_high - self.reward_low)
-
-        return z_dist, r_dist_normed, transition_dist_normed
+        if self.norm_encoder:
+            return (
+                z_dist / 2.0,
+                r_dist / (self.reward_high - self.reward_low),
+                transition_dist / 2.0,
+            )
+        else:
+            return z_dist, r_dist, transition_dist
 
     def _aux_loss(
         self,

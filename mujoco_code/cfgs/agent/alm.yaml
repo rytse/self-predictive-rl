@@ -28,7 +28,7 @@ freeze_critic: true
 online_encoder_actorcritic: true
 
 # Encoder hparams
-norm_encoder: true
+norm_encoder: false
 
 # Defaults for bisim algos
 bisim_gamma: 1.0

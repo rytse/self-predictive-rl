@@ -41,9 +41,7 @@ class AlmAgent(object):
         # bisim
         self.bisim_gamma = cfg.bisim_gamma
         self.bisim_critic_train_steps = cfg.bisim_critic_train_steps
-        self.bisim_z_dist_scalarize = cfg.bisim_z_dist_scalarize
         self.bisim_deterministic = cfg.bisim_deterministic
-        self.bisim_z_norm = cfg.bisim_z_norm
 
         # aux
         self.aux = cfg.aux
@@ -503,36 +501,14 @@ class AlmAgent(object):
         idxs_i = torch.randperm(self.batch_size)
         idxs_j = torch.arange(0, self.batch_size)
 
-        if self.bisim_z_norm == "l2":
-            assert self.bisim_z_dist_scalarize
-            z_dist = torch.norm(z_batch[idxs_i] - z_batch[idxs_j], dim=-1).view(-1, 1)
-        elif self.bisim_z_norm == "l1":
-            z_dist = F.smooth_l1_loss(
-                z_batch[idxs_i],
-                z_batch[idxs_j],
-                reduction="none",
-            )
-            if self.bisim_z_dist_scalarize:
-                z_dist = z_dist.mean(dim=-1).view(-1, 1)
-        else:
-            raise ValueError("Invalid bisim_z_norm")
-
-        if self.bisim_z_norm == "l2":
-            r_dist = torch.abs(reward_batch[idxs_i] - reward_batch[idxs_j]).view(-1, 1)
-            r_dist_normed = r_dist / (self.reward_high - self.reward_low)
-        else:
-            r_dist = F.smooth_l1_loss(
-                reward_batch[idxs_i].view(-1, 1),
-                reward_batch[idxs_j].view(-1, 1),
-                reduction="none",
-            )
-            r_dist_normed = r_dist / (self.reward_high - self.reward_low)
+        z_dist = torch.norm(z_batch[idxs_i] - z_batch[idxs_j], dim=-1).view(-1, 1)
+        r_dist = torch.abs(reward_batch[idxs_i] - reward_batch[idxs_j]).view(-1, 1)
 
         if "critic" in self.aux:
             critique_i = self.bisim_critic(
                 z_next_dist.mean[idxs_i],
                 z_batch[idxs_i],
-                action_batch[idxs_i],
+                action_batch[idxs_i], # TODO normalize action inputs?
                 z_batch[idxs_j],
                 action_batch[idxs_j],
             )
@@ -543,23 +519,16 @@ class AlmAgent(object):
                 z_batch[idxs_j],
                 action_batch[idxs_j],
             )
-
-            if self.bisim_z_norm == "l2":
-                transition_dist = torch.abs(critique_i - critique_j).view(-1, 1)
-                transition_dist_normed = (
-                    transition_dist / 2.0
-                )  # if latent space is unit ball, then max dist is 2
-            else:
-                transition_dist = F.smooth_l1_loss(
-                    critique_i, critique_j, reduction="none"
-                )
-                transition_dist_normed = transition_dist / 2.0
+            transition_dist = torch.abs(critique_i - critique_j).view(-1, 1)
         else:
             transition_dist = torch.sqrt(
                 (z_next_dist.mean[idxs_i] - z_next_dist.mean[idxs_j]).pow(2)
                 + (z_next_dist.stddev[idxs_i] - z_next_dist.stddev[idxs_j]).pow(2)
             )
-            transition_dist_normed = transition_dist / 2.0
+
+        # When the latent space is unit ball, the max dist is 2 (pole to pole)
+        transition_dist_normed = transition_dist / 2.0
+        r_dist_normed = r_dist / (self.reward_high - self.reward_low)
 
         return z_dist, r_dist_normed, transition_dist_normed
 
@@ -602,6 +571,7 @@ class AlmAgent(object):
             )
             z_next_prior_sample = None
             bisimilarity = r_dist + self.bisim_gamma * transition_dist
+            distance = torch.norm(z_dist - bisimilarity, dim=-1).view(-1, 1)
 
             if log:
                 metrics["z_dist"] = z_dist.mean().item()
@@ -609,10 +579,6 @@ class AlmAgent(object):
                 metrics["transition_dist"] = transition_dist.mean().item()
                 metrics["bisimilarity"] = bisimilarity.mean().item()
 
-            if self.bisim_z_norm == "l2":
-                distance = torch.norm(z_dist - bisimilarity, dim=-1).view(-1, 1)
-            else:
-                distance = F.mse_loss(z_dist, bisimilarity)
         else:  # TODO simplify this. for now we do this to torch.compile(bisim_encoder_loss) nicely
             z_next_prior_dist = self.model(z_batch, action_batch)  # p_z(z' | z, a)
             z_next_dist = self._get_z_next_dist(next_state_batch)  # p(z' | s')

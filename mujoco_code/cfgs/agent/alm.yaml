@@ -33,9 +33,7 @@ norm_encoder: true
 # Defaults for bisim algos
 bisim_gamma: 1.0
 bisim_critic_train_steps: 10
-bisim_z_dist_scalarize: true
 bisim_deterministic: true
-bisim_z_norm: "l2"
 
 #learning 
 gamma: 0.99

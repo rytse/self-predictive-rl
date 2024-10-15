@@ -455,16 +455,15 @@ class AlmAgent(object):
         action_seq: torch.Tensor,
         next_state_seq: torch.Tensor,
     ) -> torch.Tensor:
-        assert self.aux == "bisim_critic"
+        with torch.no_grad():
+            z_dist = self.encoder(state_seq[0])
+            z_batch = z_dist.rsample()  # z (B, Z)
+            action_batch = action_seq[0]
+            next_state_batch = next_state_seq[0]
+            z_next_dist = self._get_z_next_dist(next_state_batch)
 
-        z_dist = self.encoder(state_seq[0])
-        z_batch = z_dist.rsample()  # z (B, Z)
-        action_batch = action_seq[0]
-        next_state_batch = next_state_seq[0]
-        z_next_dist = self._get_z_next_dist(next_state_batch)
-
-        idxs_i = torch.randperm(self.batch_size)
-        idxs_j = torch.arange(0, self.batch_size)
+            idxs_i = torch.randperm(self.batch_size)
+            idxs_j = torch.arange(0, self.batch_size)
 
         critique_i = self.bisim_critic(
             z_next_dist.mean[idxs_i],

@@ -208,22 +208,29 @@ class AlmAgent(object):
             return self.aux_coef
         return self.aux_coef_log.exp().item()
 
-    def get_action(
-        self, state: npt.NDArray, step: int, eval: bool = False
-    ) -> npt.NDArray:
-        std = utils.linear_schedule(
-            self.expl_start, self.expl_end, self.expl_duration, step
-        )
+    @torch.compile
+    def _get_action_torch(
+        self, state: torch.Tensor, step: int, eval: bool
+    ) -> torch.Tensor:
         with torch.no_grad():
-            state = torch.FloatTensor(state).unsqueeze(0).to(self.device)  # (1, S)
+            std = utils.linear_schedule(
+                self.expl_start, self.expl_end, self.expl_duration, step
+            )
             z = self.encoder(state).sample()
-            action_dist = self.actor(z, std)  # N(mean, std)
+            action_dist = self.actor(z, std)
             action = action_dist.sample(clip=None)
 
             if eval:
                 action = action_dist.mean
 
-        return action.cpu().numpy()[0]
+        return action
+
+    def get_action(
+        self, state: npt.NDArray, step: int, eval: bool = False
+    ) -> npt.NDArray:
+        state_torch = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        action_torch = self._get_action_torch(state_torch, step, eval)
+        return action_torch.cpu().numpy()[0]
 
     def get_representation(self, state: npt.NDArray) -> npt.NDArray:
         with torch.no_grad():
@@ -232,9 +239,10 @@ class AlmAgent(object):
 
         return z.cpu().numpy()
 
-    def get_lower_bound(
+    @torch.compile
+    def _get_lower_bound_torch(
         self, state_batch: torch.Tensor, action_batch: torch.Tensor
-    ) -> npt.NDArray:
+    ) -> torch.Tensor:
         with torch.no_grad():
             z_batch = self.encoder_target(state_batch).sample()
             z_seq, action_seq = self._rollout_evaluation(z_batch, action_batch, std=0.1)
@@ -254,6 +262,12 @@ class AlmAgent(object):
             discount = torch.cumprod(discount, 0)
 
             lower_bound = torch.sum(discount * returns, dim=0)
+        return lower_bound
+
+    def get_lower_bound(
+        self, state_batch: torch.Tensor, action_batch: torch.Tensor
+    ) -> npt.NDArray:
+        lower_bound = self._get_lower_bound_torch(state_batch, action_batch)
         return lower_bound.cpu().numpy()
 
     @torch.compile
@@ -364,10 +378,14 @@ class AlmAgent(object):
         reward_seq: torch.Tensor,
         std: float,
         metrics: Dict[str, Any],
+        check_collapse: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         z_dist = self.encoder(state_seq[0])
         z_batch = z_dist.rsample()  # z (B, Z)
-        self._check_collapse(z_batch.detach(), metrics)
+
+        # This is an expensive operation
+        if check_collapse:
+            self._check_collapse(z_batch.detach(), metrics)
 
         log = True
         aux_loss = None
@@ -489,10 +507,10 @@ class AlmAgent(object):
         next_state_batch: torch.Tensor,
         action_batch: torch.Tensor,
         reward_batch: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Calculates the components of the bisim loss. This is separated from aux_loss so that it can be `torch.compile`d without worrying about logging.
-
+        Calculates the components of the bisim loss. This is separated from aux_loss so that it can
+        be `torch.compile`d without worrying about logging.
         """
         z_next_dist = self._get_z_next_dist(next_state_batch)  # p(z' | s')
 
@@ -525,13 +543,18 @@ class AlmAgent(object):
             )
 
         if self.norm_encoder:
-            return (
-                z_dist / 2.0,
-                r_dist / (self.reward_high - self.reward_low),
-                transition_dist / 2.0,
-            )
+            z_dist_final = z_dist / 2.0
+            r_dist_final = r_dist / (self.reward_high - self.reward_low)
+            transition_dist_final = transition_dist / 2.0
         else:
-            return z_dist, r_dist, transition_dist
+            z_dist_final = z_dist
+            r_dist_final = r_dist
+            transition_dist_final = transition_dist
+
+        bisimilarity = r_dist_final + self.bisim_gamma * transition_dist_final
+        bisim_loss = torch.norm(z_dist_final - bisimilarity, dim=-1).view(-1, 1)
+
+        return bisim_loss, z_dist_final, r_dist_final, transition_dist_final
 
     def _aux_loss(
         self,
@@ -560,7 +583,9 @@ class AlmAgent(object):
             return distance, None
 
         if "bisim" in self.aux:
+            z_next_prior_sample = None
             (
+                distance,
                 z_dist,
                 r_dist,
                 transition_dist,
@@ -570,15 +595,10 @@ class AlmAgent(object):
                 action_batch,
                 reward_batch,
             )
-            z_next_prior_sample = None
-            bisimilarity = r_dist + self.bisim_gamma * transition_dist
-            distance = torch.norm(z_dist - bisimilarity, dim=-1).view(-1, 1)
-
             if log:
                 metrics["z_dist"] = z_dist.mean().item()
                 metrics["r_dist"] = r_dist.mean().item()
                 metrics["transition_dist"] = transition_dist.mean().item()
-                metrics["bisimilarity"] = bisimilarity.mean().item()
 
         else:  # TODO simplify this. for now we do this to torch.compile(bisim_encoder_loss) nicely
             z_next_prior_dist = self.model(z_batch, action_batch)  # p_z(z' | z, a)

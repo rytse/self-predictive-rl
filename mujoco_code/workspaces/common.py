@@ -2,8 +2,11 @@ import numpy as np
 from omegaconf import DictConfig
 import utils
 from utils import logger
-from gym import Env
+from gym.wrappers import RecordEpisodeStatistics
+from gym import Env, make as gym_make
 import torch
+
+from envs import quantum
 
 
 def make_agent(env: Env, device: torch.device, cfg: DictConfig):
@@ -48,13 +51,12 @@ def make_agent(env: Env, device: torch.device, cfg: DictConfig):
 
 def make_env(cfg):
     if cfg.benchmark == "gym":
-        import gym
 
         if cfg.id == "T-Ant-v2" or cfg.id == "T-Humanoid-v2":
             utils.register_mbpo_environments()
 
         def get_env(cfg):
-            env = gym.make(cfg.id)
+            env = gym_make(cfg.id)
 
             if cfg.distraction > 0:
                 from workspaces.distracted_env import (
@@ -84,7 +86,7 @@ def make_env(cfg):
                 else:
                     raise NotImplementedError
 
-            env = gym.wrappers.RecordEpisodeStatistics(env)
+            env = RecordEpisodeStatistics(env)
             env.seed(seed=cfg.seed)
             env.observation_space.seed(cfg.seed)
             env.action_space.seed(cfg.seed)

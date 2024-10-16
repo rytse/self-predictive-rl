@@ -21,7 +21,7 @@ seq_len: 1
 #key hparams
 algo: ours # {null, td3, alm-3, alm-1, alm-no-model, alm-no-model-ours}
 aux: bisim_critic # {rkl, l2, none}
-aux_optim: detach # {ema, detach, online, none}
+aux_optim: ema # {ema, detach, online, none}
 aux_coef: "v-1.0"
 disable_svg: true
 disable_reward: true

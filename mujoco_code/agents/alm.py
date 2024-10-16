@@ -37,7 +37,7 @@ class AlmAgent(object):
         self.disable_reward = cfg.disable_reward
         self.freeze_critic = cfg.freeze_critic
         self.online_encoder_actorcritic = cfg.online_encoder_actorcritic
-        self.norm_encoder = cfg.norm_encoder
+        self.bisim_norm_reward = cfg.bisim_norm_reward
 
         # bisim
         self.bisim_gamma = cfg.bisim_gamma
@@ -113,12 +113,12 @@ class AlmAgent(object):
             else:  # fkl, rkl, op-kl
                 EncoderClass, ModelClass = StoEncoder, StoModel
 
-        self.encoder = EncoderClass(
-            num_states, hidden_dims, latent_dims, self.norm_encoder
-        ).to(self.device)
-        self.encoder_target = EncoderClass(
-            num_states, hidden_dims, latent_dims, self.norm_encoder
-        ).to(self.device)
+        self.encoder = EncoderClass(num_states, hidden_dims, latent_dims).to(
+            self.device
+        )
+        self.encoder_target = EncoderClass(num_states, hidden_dims, latent_dims).to(
+            self.device
+        )
         utils.hard_update(self.encoder_target, self.encoder)
 
         self.model = torch.compile(
@@ -542,7 +542,7 @@ class AlmAgent(object):
                 + (z_next_dist.stddev[idxs_i] - z_next_dist.stddev[idxs_j]).pow(2)
             )
 
-        if self.norm_encoder:
+        if self.bisim_norm_reward:
             z_dist_final = z_dist / 2.0
             r_dist_final = r_dist / (self.reward_high - self.reward_low)
             transition_dist_final = transition_dist / 2.0

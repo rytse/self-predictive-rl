@@ -15,11 +15,9 @@ class DetEncoder(nn.Module):
         input_shape: int,
         hidden_dims: int,
         latent_dims: int,
-        norm_encoder: bool,
     ):
         super().__init__()
         self.latent_dims = latent_dims
-        self.unit_ball_projection = norm_encoder
         self.encoder = nn.Sequential(
             nn.Linear(input_shape, hidden_dims),
             nn.ELU(),
@@ -33,15 +31,12 @@ class DetEncoder(nn.Module):
 
     def forward(self, x: torch.Tensor) -> utils.Dirac:
         loc = self.encoder(x)
-        if self.unit_ball_projection:
-            loc = loc / (1.0 + torch.norm(loc, dim=-1, keepdim=True))
-        return utils.Dirac(loc)
+        loc_normed = loc / (1.0 + torch.norm(loc, dim=-1, keepdim=True))
+        return utils.Dirac(loc_normed)
 
 
 class StoEncoder(nn.Module):
-    def __init__(
-        self, input_shape: int, hidden_dims: int, latent_dims: int, _norm_encoder: bool
-    ):
+    def __init__(self, input_shape: int, hidden_dims: int, latent_dims: int):
         super().__init__()
         self.latent_dims = latent_dims
         self.encoder = nn.Sequential(

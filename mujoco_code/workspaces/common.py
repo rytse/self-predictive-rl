@@ -22,7 +22,7 @@ def make_agent(env: Env, device: torch.device, cfg: DictConfig):
             reward_low = -200
             reward_high = 400
         elif reward_low == -np.inf or reward_high == np.inf:
-            raise NotImplementedError
+            assert not cfg.bisim_norm_reward
 
         if cfg.id == "Humanoid-v2":
             cfg.env_buffer_size = 1000000

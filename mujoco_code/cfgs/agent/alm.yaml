@@ -27,13 +27,11 @@ disable_reward: true
 freeze_critic: true
 online_encoder_actorcritic: true
 
-# Encoder hparams
-norm_encoder: false
-
 # Defaults for bisim algos
 bisim_gamma: 1.0
 bisim_critic_train_steps: 10
 bisim_deterministic: true
+bisim_norm_reward: false
 
 #learning 
 gamma: 0.99

@@ -588,3 +588,67 @@ class Agent(object):
         metrics["zp_loss"] = model_loss.item()
 
         return model_loss
+
+    def compute_bisim_critic_loss(
+        self,
+        metrics,
+        batch_z,
+        batch_act,
+        batch_next_z,
+    ):
+        idxs_i = torch.randperm(self.batch_size)
+        idxs_j = torch.arange(0, self.batch_size)
+
+        critique_i = self.bisim_critic(
+            batch_next_z[idxs_i],
+            batch_z[idxs_i],
+            batch_act[idxs_i],
+            batch_z[idxs_j],
+            batch_act[idxs_j],
+        )
+        critique_j = self.bisim_critic(
+            batch_next_z[idxs_j],
+            batch_z[idxs_i],
+            batch_act[idxs_i],
+            batch_z[idxs_j],
+            batch_act[idxs_j],
+        )
+
+        return -torch.mean(critique_i - critique_j)  # signed!
+
+    def compute_bisim_encoder_loss(
+        self,
+        metrics,
+        batch_z,
+        batch_act,
+        batch_next_z,
+        batch_reward,
+    ):
+        idxs_i = torch.randperm(self.batch_size)
+        idxs_j = torch.arange(0, self.batch_size)
+
+        z_dist = torch.norm(batch_z[idxs_i] - batch_z[idxs_j], dim=1).view(-1, 1)
+        r_dist = torch.abs(batch_reward[idxs_i] - batch_reward[idxs_j]).view(-1, 1)
+
+        critique_i = self.bisim_critic(
+            batch_next_z[idxs_i],
+            batch_z[idxs_i],
+            batch_act[idxs_i],
+            batch_z[idxs_j],
+            batch_act[idxs_j],
+        )
+        critique_j = self.bisim_critic(
+            batch_next_z[idxs_j],
+            batch_z[idxs_i],
+            batch_act[idxs_i],
+            batch_z[idxs_j],
+            batch_act[idxs_j],
+        )
+        transition_dist = torch.abs(critique_i - critique_j).view(-1, 1)
+
+        bisimilarity = r_dist + self.bisim_gamma * transition_dist
+        bisim_loss = torch.square(z_dist - bisimilarity).mean()
+
+        metrics["bisim_loss"] = bisim_loss.item()
+
+        return bisim_loss

@@ -1,8 +1,17 @@
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+
 import numpy as np
 from agent import Agent
 from r2d2replaybuffer import r2d2_ReplayMemory
 import torch
-import gymnasium as gym
+import gym
 import time
 import logger
 
@@ -33,99 +42,116 @@ def run_exp(args):
     test_env.reset(seed=seed + 1)
     memory.reset(seed)
 
-    total_numsteps = 0
-    while total_numsteps <= args["num_steps"]:
-        hidden_p = agent.get_initial_hidden()
-        action = -1  # placeholder
-        reward = 0
-        state = env.reset()[0]["image"].astype(np.float32).reshape(-1)
+    # Progress bar
+    progress_bar = Progress(
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TextColumn("•"),
+        TimeElapsedColumn(),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+    )
 
-        ep_hiddens = [hidden_p]  # z[-1]
-        ep_actions = [action]  # a[-1]
-        ep_rewards = [reward]  # r[-1]
-        ep_states = [state]  # o[0]
+    with progress_bar as p:
+        if not args["debug"]:
+            p_train_task = p.add_task("Training", total=args["num_steps"])
 
-        while True:
-            if total_numsteps % args["logging_freq"] == 0:
-                if total_numsteps > 0:  # except the first evaluation
-                    FPS = running_metrics["length"] / (time.time() - time_now)
-                    # average the metrics
+        total_numsteps = 0
+        while total_numsteps <= args["num_steps"]:
+            hidden_p = agent.get_initial_hidden()
+            action = -1  # placeholder
+            reward = 0
+            state = env.reset()[0]["image"].astype(np.float32).reshape(-1)
+
+            ep_hiddens = [hidden_p]  # z[-1]
+            ep_actions = [action]  # a[-1]
+            ep_rewards = [reward]  # r[-1]
+            ep_states = [state]  # o[0]
+
+            while True:
+                if total_numsteps % args["logging_freq"] == 0:
+                    if total_numsteps > 0:  # except the first evaluation
+                        FPS = running_metrics["length"] / (time.time() - time_now)
+                        # average the metrics
+                        running_metrics = {
+                            k: v / k_episode for k, v in running_metrics.items()
+                        }
+                        running_losses = {
+                            k: v / k_updates for k, v in running_losses.items()
+                        }
+                    log_and_test(
+                        test_env,
+                        agent,
+                        total_numsteps,
+                        running_metrics if total_numsteps > 0 else None,
+                        running_losses if total_numsteps > 0 else None,
+                        FPS if total_numsteps > 0 else None,
+                    )
+                    ## running metrics
+                    k_episode = 0  # num of env episodes
+                    k_updates = 0  # num of agent updates
                     running_metrics = {
-                        k: v / k_episode for k, v in running_metrics.items()
+                        k: 0.0
+                        for k in [
+                            "return",
+                            "length",
+                            "success",
+                        ]
                     }
-                    running_losses = {
-                        k: v / k_updates for k, v in running_losses.items()
-                    }
-                log_and_test(
-                    test_env,
-                    agent,
-                    total_numsteps,
-                    running_metrics if total_numsteps > 0 else None,
-                    running_losses if total_numsteps > 0 else None,
-                    FPS if total_numsteps > 0 else None,
-                )
-                ## running metrics
-                k_episode = 0  # num of env episodes
-                k_updates = 0  # num of agent updates
-                running_metrics = {
-                    k: 0.0
-                    for k in [
-                        "return",
-                        "length",
-                        "success",
-                    ]
-                }
-                running_losses = {}
-                time_now = time.time()
+                    running_losses = {}
+                    time_now = time.time()
 
-            if total_numsteps < args["random_actions_until"]:  # never used
-                action = env.action_space.sample()
-            else:
-                action, hidden_p = agent.select_action(
-                    state,
-                    action,
-                    reward,
-                    hidden_p,
-                    EPS_up=True,
-                    evaluate=False,
-                )
-
-            next_state, reward, terminated, truncated, _ = env.step(action)  # Step
-            state = next_state["image"].astype(np.float32).reshape(-1)
-
-            ep_hiddens.append(hidden_p)  # z[t]
-            ep_actions.append(action)  # a[t]
-            ep_rewards.append(reward)  # r[t]
-            ep_states.append(state)  # o[t+1]
-
-            running_metrics["return"] += reward
-            running_metrics["length"] += 1
-
-            if (
-                len(memory) > args["batch_size"]
-                and total_numsteps % args["rl_update_every_n_steps"] == 0
-            ):
-                losses = agent.update_parameters(
-                    memory, args["batch_size"], args["rl_updates_per_step"]
-                )
-                k_updates += 1
-                if running_losses == {}:
-                    running_losses = losses
+                if total_numsteps < args["random_actions_until"]:  # never used
+                    action = env.action_space.sample()
                 else:
-                    running_losses = {
-                        k: running_losses[k] + v for k, v in losses.items()
-                    }
+                    action, hidden_p = agent.select_action(
+                        state,
+                        action,
+                        reward,
+                        hidden_p,
+                        EPS_up=True,
+                        evaluate=False,
+                    )
 
-            total_numsteps += 1
+                next_state, reward, terminated, truncated, _ = env.step(action)  # Step
+                state = next_state["image"].astype(np.float32).reshape(-1)
 
-            if terminated or truncated:
-                break
+                ep_hiddens.append(hidden_p)  # z[t]
+                ep_actions.append(action)  # a[t]
+                ep_rewards.append(reward)  # r[t]
+                ep_states.append(state)  # o[t+1]
 
-        # Append transition to memory
-        memory.push(ep_states, ep_actions, ep_rewards, ep_hiddens)
+                running_metrics["return"] += reward
+                running_metrics["length"] += 1
 
-        k_episode += 1
-        running_metrics["success"] += int(reward > 0.0)  # terminal reward
+                if (
+                    len(memory) > args["batch_size"]
+                    and total_numsteps % args["rl_update_every_n_steps"] == 0
+                ):
+                    losses = agent.update_parameters(
+                        memory, args["batch_size"], args["rl_updates_per_step"]
+                    )
+                    k_updates += 1
+                    if running_losses == {}:
+                        running_losses = losses
+                    else:
+                        running_losses = {
+                            k: running_losses[k] + v for k, v in losses.items()
+                        }
+
+                total_numsteps += 1
+                if not args["debug"]:
+                    p.update(p_train_task, completed=total_numsteps)
+
+                if terminated or truncated:
+                    break
+
+            # Append transition to memory
+            memory.push(ep_states, ep_actions, ep_rewards, ep_hiddens)
+
+            k_episode += 1
+            running_metrics["success"] += int(reward > 0.0)  # terminal reward
 
 
 def log_and_test(

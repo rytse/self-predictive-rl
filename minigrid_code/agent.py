@@ -12,6 +12,7 @@ import logger
 class Agent(object):
     def __init__(self, env, args):
         self.args = args
+        self.debug = args["debug"]
         self.device = torch.device("cuda" if args["cuda"] else "cpu")
         self.obs_dim = np.prod(env.observation_space["image"].shape)  # flatten
         self.act_dim = env.action_space.n
@@ -23,20 +24,27 @@ class Agent(object):
         assert self.aux in ["None", "ZP", "OP", "AIS", "AIS-P2"]
         self.AIS_state_size = args["AIS_state_size"]
 
-        self.encoder = SeqEncoder(self.obs_dim, self.act_dim, self.AIS_state_size).to(
-            self.device
+        self.encoder = torch.compile(
+            SeqEncoder(self.obs_dim, self.act_dim, self.AIS_state_size).to(self.device),
+            mode="default",
         )
-        self.encoder_target = SeqEncoder(
-            self.obs_dim, self.act_dim, self.AIS_state_size
-        ).to(self.device)
+        self.encoder_target = torch.compile(
+            SeqEncoder(self.obs_dim, self.act_dim, self.AIS_state_size).to(self.device),
+            mode="default",
+        )
         hard_update(self.encoder_target, self.encoder)
 
-        self.critic = QNetwork_discrete(
-            self.AIS_state_size, self.act_dim, args["hidden_size"]
-        ).to(device=self.device)
-        self.critic_target = QNetwork_discrete(
-            self.AIS_state_size, self.act_dim, args["hidden_size"]
-        ).to(self.device)
+        self.critic = torch.compile(
+            QNetwork_discrete(
+                self.AIS_state_size, self.act_dim, args["hidden_size"]
+            ).to(device=self.device),
+            mode="default",
+        )
+        self.critic_target = torch.compile(
+            QNetwork_discrete(
+                self.AIS_state_size, self.act_dim, args["hidden_size"]
+            ).to(self.device)
+        )
         hard_update(self.critic_target, self.critic)
 
         if self.aux in ["AIS", "AIS-P2"]:  # modular
@@ -51,11 +59,14 @@ class Agent(object):
             )
 
         if self.aux in ["AIS", "AIS-P2"]:
-            self.model = AISModel(
-                self.obs_dim if self.aux == "AIS" else self.AIS_state_size,
-                self.act_dim,
-                self.AIS_state_size,
-            ).to(self.device)
+            self.model = torch.compile(
+                AISModel(
+                    self.obs_dim if self.aux == "AIS" else self.AIS_state_size,
+                    self.act_dim,
+                    self.AIS_state_size,
+                ).to(self.device),
+                mode="default",
+            )
             self.AIS_optim = Adam(
                 list(self.encoder.parameters()) + list(self.model.parameters()),
                 lr=args["aux_lr"],
@@ -63,11 +74,14 @@ class Agent(object):
         elif self.aux == "None":  # model-free R2D2
             self.model = None
         else:
-            self.model = LatentModel(
-                self.obs_dim if self.aux == "OP" else self.AIS_state_size,
-                self.act_dim,
-                self.AIS_state_size,
-            ).to(self.device)
+            self.model = torch.compile(
+                LatentModel(
+                    self.obs_dim if self.aux == "OP" else self.AIS_state_size,
+                    self.act_dim,
+                    self.AIS_state_size,
+                ).to(self.device),
+                mode="default",
+            )
             self.AIS_optim = Adam(
                 self.model.parameters(),
                 lr=args["aux_lr"],
@@ -249,7 +263,8 @@ class Agent(object):
         else:
             qf = self.critic(q_z.data)  # (*, A)
 
-        self.report_rank(q_z.data.detach(), metrics)
+        if self.debug:
+            self.report_rank(q_z.data.detach(), metrics)
 
         batch_current_act = torch.from_numpy(batch_current_act).to(self.device)
         packed_current_act = pack_padded_sequence(

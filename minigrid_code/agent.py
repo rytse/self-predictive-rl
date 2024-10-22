@@ -28,9 +28,12 @@ class Agent(object):
         if self.aux == "bisim_critic":
             self.bisim_gamma = args["bisim_gamma"]
             self.bisim_critic_train_steps = args["bisim_critic_train_steps"]
-            self.bisim_critic = BisimCritic(
-                self.AIS_state_size, self.act_dim, self.AIS_state_size // 2
-            ).to(self.device)
+            self.bisim_critic = torch.compile(
+                BisimCritic(
+                    self.AIS_state_size, self.act_dim, self.AIS_state_size // 2
+                ).to(self.device),
+                mode="default",
+            )
             self.bisim_critic_opt = RMSprop(
                 self.bisim_critic.parameters(), lr=args["bisim_lr"]
             )
@@ -398,14 +401,15 @@ class Agent(object):
                 bisim_critic_loss.backward(retain_graph=True)
                 self.bisim_critic_opt.step()
 
-            losses += self.compute_bisim_encoder_loss(
-                metrics,
+            bisim_loss = self.compute_bisim_encoder_loss(
                 q_z.data,
                 packed_current_act.data,
                 q_next_z.data,
                 next_rew_packed.data,
                 batch_size,
             )
+            losses += bisim_loss
+            metrics["bisim_loss"] = bisim_loss.item()
 
         # 5. Compute Target for Double Q-learning
         with torch.no_grad():
@@ -618,6 +622,7 @@ class Agent(object):
 
         return model_loss
 
+    @torch.compile
     def compute_bisim_critic_loss(
         self,
         batch_z: torch.Tensor,
@@ -625,10 +630,10 @@ class Agent(object):
         batch_next_z: torch.Tensor,
         batch_size: int,
     ) -> torch.Tensor:
-        batch_act_onehot = F.one_hot(batch_act.long(), self.act_dim).float()
-
-        idxs_i = torch.randperm(batch_size)
-        idxs_j = torch.arange(0, batch_size)
+        with torch.no_grad():
+            batch_act_onehot = F.one_hot(batch_act.long(), self.act_dim).float()
+            idxs_i = torch.randperm(batch_size)
+            idxs_j = torch.arange(0, batch_size)
 
         critique_i = self.bisim_critic(
             batch_next_z[idxs_i],
@@ -647,22 +652,22 @@ class Agent(object):
 
         return -torch.mean(critique_i - critique_j)  # signed!
 
+    @torch.compile
     def compute_bisim_encoder_loss(
         self,
-        metrics: Dict[str, Any],
         batch_z: torch.Tensor,
         batch_act: torch.Tensor,
         batch_next_z: torch.Tensor,
         batch_reward: torch.Tensor,
         batch_size: int,
     ):
-        batch_act_onehot = F.one_hot(batch_act.long(), self.act_dim).float()
-
-        idxs_i = torch.randperm(batch_size)
-        idxs_j = torch.arange(0, batch_size)
+        with torch.no_grad():
+            batch_act_onehot = F.one_hot(batch_act.long(), self.act_dim).float()
+            idxs_i = torch.randperm(batch_size)
+            idxs_j = torch.arange(0, batch_size)
+            r_dist = torch.abs(batch_reward[idxs_i] - batch_reward[idxs_j]).view(-1, 1)
 
         z_dist = torch.norm(batch_z[idxs_i] - batch_z[idxs_j], dim=1).view(-1, 1)
-        r_dist = torch.abs(batch_reward[idxs_i] - batch_reward[idxs_j]).view(-1, 1)
 
         critique_i = self.bisim_critic(
             batch_next_z[idxs_i],
@@ -682,7 +687,5 @@ class Agent(object):
 
         bisimilarity = r_dist + self.bisim_gamma * transition_dist
         bisim_loss = torch.square(z_dist - bisimilarity).mean()
-
-        metrics["bisim_loss"] = bisim_loss.item()
 
         return bisim_loss

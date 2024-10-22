@@ -11,6 +11,7 @@ import argparse
 import json
 from run import run_exp
 import logger
+import torch
 
 
 def main():
@@ -87,6 +88,8 @@ def main():
     config_path = os.path.join(logdir, "config.json")
     with open(config_path, "w") as fp:
         json.dump(params, fp, indent=4)
+
+    torch.set_float32_matmul_precision("medium")
 
     ###################
     ### RUN TRAINING

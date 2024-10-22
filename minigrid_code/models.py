@@ -1,7 +1,39 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pack_padded_sequence
+from torch.nn.utils.rnn import pack_padded_sequence, PackedSequence
+from torch.nn.utils.parametrizations import spectral_norm
+
+
+def normalize_packed_sequence(packed_seq: PackedSequence) -> PackedSequence:
+    """
+    Applies f(x) = x / (1 + ||x||) to a PackedSequence,
+    where the norm is computed over the last dimension.
+
+    Args:
+        packed_seq (PackedSequence): Input packed sequence with data shape
+            (sum of sequence lengths, hidden_dim)
+
+    Returns:
+        PackedSequence: Normalized packed sequence with same structure as input
+            and normalized values in data tensor
+    """
+    # Get the packed data
+    data: torch.Tensor = packed_seq.data
+
+    # Calculate the norm over the last dimension
+    norm: torch.Tensor = torch.norm(data, p=2, dim=-1, keepdim=True)
+
+    # Apply the normalization formula
+    normalized_data: torch.Tensor = data / (1 + norm)
+
+    # Create new PackedSequence with normalized data
+    return PackedSequence(
+        data=normalized_data,
+        batch_sizes=packed_seq.batch_sizes,
+        sorted_indices=packed_seq.sorted_indices,
+        unsorted_indices=packed_seq.unsorted_indices,
+    )
 
 
 class SeqEncoder(nn.Module):
@@ -46,8 +78,14 @@ class SeqEncoder(nn.Module):
                 x, batch_lengths, batch_first=True, enforce_sorted=False
             )
             # print('packed',x.data.shape)
+
         x, hidden = self.lstm(x, hidden)
-        return x, hidden
+
+        if isinstance(x, torch.Tensor):
+            x_normed = x / (1 + torch.norm(x, p=2, dim=-1, keepdim=True))
+        else:
+            x_normed = normalize_packed_sequence(x)
+        return x_normed, hidden
 
 
 class LatentModel(nn.Module):
@@ -112,6 +150,44 @@ class QNetwork_discrete(nn.Module):
         x1 = self.linear3(x1)
 
         return x1
+
+
+# TODO don't repeate code
+class BisimCritic(nn.Module):
+    def __init__(
+        self,
+        z_dim: int,
+        a_dim: int,
+        hidden_dim: int,
+    ):
+        super().__init__()
+
+        self.arg_net = nn.Sequential(
+            spectral_norm(nn.Linear(z_dim, hidden_dim)),
+            nn.ReLU(),
+        )
+        self.cond_net = nn.Sequential(
+            nn.Linear(2 * (z_dim + a_dim), hidden_dim),
+            nn.ReLU(),
+        )
+        self.combine_net = nn.Sequential(
+            spectral_norm(nn.Linear(2 * hidden_dim, hidden_dim)),
+            nn.ReLU(),
+            spectral_norm(nn.Linear(hidden_dim, 1)),
+        )
+
+    def forward(
+        self,
+        zk: torch.Tensor,
+        zi: torch.Tensor,
+        ai: torch.Tensor,
+        zj: torch.Tensor,
+        aj: torch.Tensor,
+    ) -> torch.Tensor:
+        breakpoint()
+        arg = self.arg_net(zk)
+        cond = self.cond_net(torch.cat([zi, ai, zj, aj], -1))
+        return self.combine_net(torch.cat([arg, cond], -1))
 
 
 def convert_int_to_onehot(value, num_values):

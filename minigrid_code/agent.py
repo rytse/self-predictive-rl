@@ -1,8 +1,9 @@
+from typing import Dict, Any
 from models import *
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.optim import Adam
+from torch.optim import Adam, RMSprop
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import math
 import random
@@ -21,17 +22,25 @@ class Agent(object):
         self.target_update_interval = args["target_update_interval"]
 
         self.aux = args["aux"]
-        assert self.aux in ["None", "ZP", "OP", "AIS", "AIS-P2"]
+        assert self.aux in ["None", "ZP", "OP", "AIS", "AIS-P2", "bisim_critic"]
         self.AIS_state_size = args["AIS_state_size"]
 
-        self.encoder = torch.compile(
-            SeqEncoder(self.obs_dim, self.act_dim, self.AIS_state_size).to(self.device),
-            mode="default",
+        if self.aux == "bisim_critic":
+            self.bisim_gamma = args["bisim_gamma"]
+            self.bisim_critic_train_steps = args["bisim_critic_train_steps"]
+            self.bisim_critic = BisimCritic(
+                self.AIS_state_size, self.act_dim, self.AIS_state_size // 2
+            ).to(self.device)
+            self.bisim_critic_opt = RMSprop(
+                self.bisim_critic.parameters(), lr=args["bisim_lr"]
+            )
+
+        self.encoder = SeqEncoder(self.obs_dim, self.act_dim, self.AIS_state_size).to(
+            self.device
         )
-        self.encoder_target = torch.compile(
-            SeqEncoder(self.obs_dim, self.act_dim, self.AIS_state_size).to(self.device),
-            mode="default",
-        )
+        self.encoder_target = SeqEncoder(
+            self.obs_dim, self.act_dim, self.AIS_state_size
+        ).to(self.device)
         hard_update(self.encoder_target, self.encoder)
 
         self.critic = torch.compile(
@@ -377,6 +386,23 @@ class Agent(object):
                 batch_next_z_target=q_next_z_target.data,
                 batch_final_flag=packed_final.data,
             )
+        elif self.aux == "bisim_critic":
+            for _ in range(self.bisim_critic_train_steps):
+                bisim_critic_loss = self.compute_bisim_critic_loss(
+                    q_z.data, packed_current_act.data, unpacked_ais_z, batch_size
+                )
+                self.bisim_critic_opt.zero_grad()
+                bisim_critic_loss.backward()
+                self.bisim_critic_opt.step()
+
+            losses += self.compute_bisim_encoder_loss(
+                metrics,
+                q_z.data,
+                packed_current_act.data,
+                unpacked_ais_z,
+                next_rew_packed.data,
+                batch_size,
+            )
 
         # 5. Compute Target for Double Q-learning
         with torch.no_grad():
@@ -591,13 +617,13 @@ class Agent(object):
 
     def compute_bisim_critic_loss(
         self,
-        metrics,
-        batch_z,
-        batch_act,
-        batch_next_z,
-    ):
-        idxs_i = torch.randperm(self.batch_size)
-        idxs_j = torch.arange(0, self.batch_size)
+        batch_z: torch.Tensor,
+        batch_act: torch.Tensor,
+        batch_next_z: torch.Tensor,
+        batch_size: int,
+    ) -> torch.Tensor:
+        idxs_i = torch.randperm(batch_size)
+        idxs_j = torch.arange(0, batch_size)
 
         critique_i = self.bisim_critic(
             batch_next_z[idxs_i],
@@ -618,14 +644,16 @@ class Agent(object):
 
     def compute_bisim_encoder_loss(
         self,
-        metrics,
-        batch_z,
-        batch_act,
-        batch_next_z,
-        batch_reward,
+        metrics: Dict[str, Any],
+        batch_z: torch.Tensor,
+        batch_act: torch.Tensor,
+        batch_next_z: torch.Tensor,
+        batch_reward: torch.Tensor,
+        batch_size: int,
     ):
-        idxs_i = torch.randperm(self.batch_size)
-        idxs_j = torch.arange(0, self.batch_size)
+
+        idxs_i = torch.randperm(batch_size)
+        idxs_j = torch.arange(0, batch_size)
 
         z_dist = torch.norm(batch_z[idxs_i] - batch_z[idxs_j], dim=1).view(-1, 1)
         r_dist = torch.abs(batch_reward[idxs_i] - batch_reward[idxs_j]).view(-1, 1)

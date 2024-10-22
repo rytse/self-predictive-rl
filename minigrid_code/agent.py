@@ -303,7 +303,7 @@ class Agent(object):
                 enforce_sorted=False,
             )  # o'
 
-        if self.aux in ["AIS", "AIS-P2"]:  # prepare reward targets
+        if self.aux in ["AIS", "AIS-P2", "bisim_critic"]:  # prepare reward targets
             next_rew = (
                 torch.from_numpy(batch_model_target_reward)
                 .to(self.device)
@@ -325,7 +325,7 @@ class Agent(object):
                 enforce_sorted=False,
             )
 
-        if self.aux in ["AIS-P2", "ZP"]:  # prepare next_z targets
+        if self.aux in ["AIS-P2", "ZP", "bisim_critic"]:  # prepare next_z targets
             q_next_z = pack_padded_sequence(
                 unpacked_ais_z[:, 1:],  # shift one step
                 list(batch_learn_len),  # we only use first L hidden states
@@ -389,17 +389,20 @@ class Agent(object):
         elif self.aux == "bisim_critic":
             for _ in range(self.bisim_critic_train_steps):
                 bisim_critic_loss = self.compute_bisim_critic_loss(
-                    q_z.data, packed_current_act.data, unpacked_ais_z, batch_size
+                    q_z.data,
+                    packed_current_act.data,
+                    q_next_z.data,
+                    batch_size,
                 )
                 self.bisim_critic_opt.zero_grad()
-                bisim_critic_loss.backward()
+                bisim_critic_loss.backward(retain_graph=True)
                 self.bisim_critic_opt.step()
 
             losses += self.compute_bisim_encoder_loss(
                 metrics,
                 q_z.data,
                 packed_current_act.data,
-                unpacked_ais_z,
+                q_next_z.data,
                 next_rew_packed.data,
                 batch_size,
             )
@@ -622,22 +625,24 @@ class Agent(object):
         batch_next_z: torch.Tensor,
         batch_size: int,
     ) -> torch.Tensor:
+        batch_act_onehot = F.one_hot(batch_act.long(), self.act_dim).float()
+
         idxs_i = torch.randperm(batch_size)
         idxs_j = torch.arange(0, batch_size)
 
         critique_i = self.bisim_critic(
             batch_next_z[idxs_i],
             batch_z[idxs_i],
-            batch_act[idxs_i],
+            batch_act_onehot[idxs_i],
             batch_z[idxs_j],
-            batch_act[idxs_j],
+            batch_act_onehot[idxs_j],
         )
         critique_j = self.bisim_critic(
             batch_next_z[idxs_j],
             batch_z[idxs_i],
-            batch_act[idxs_i],
+            batch_act_onehot[idxs_i],
             batch_z[idxs_j],
-            batch_act[idxs_j],
+            batch_act_onehot[idxs_j],
         )
 
         return -torch.mean(critique_i - critique_j)  # signed!
@@ -651,6 +656,7 @@ class Agent(object):
         batch_reward: torch.Tensor,
         batch_size: int,
     ):
+        batch_act_onehot = F.one_hot(batch_act.long(), self.act_dim).float()
 
         idxs_i = torch.randperm(batch_size)
         idxs_j = torch.arange(0, batch_size)
@@ -661,16 +667,16 @@ class Agent(object):
         critique_i = self.bisim_critic(
             batch_next_z[idxs_i],
             batch_z[idxs_i],
-            batch_act[idxs_i],
+            batch_act_onehot[idxs_i],
             batch_z[idxs_j],
-            batch_act[idxs_j],
+            batch_act_onehot[idxs_j],
         )
         critique_j = self.bisim_critic(
             batch_next_z[idxs_j],
             batch_z[idxs_i],
-            batch_act[idxs_i],
+            batch_act_onehot[idxs_i],
             batch_z[idxs_j],
-            batch_act[idxs_j],
+            batch_act_onehot[idxs_j],
         )
         transition_dist = torch.abs(critique_i - critique_j).view(-1, 1)
 

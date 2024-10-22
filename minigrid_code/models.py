@@ -184,7 +184,6 @@ class BisimCritic(nn.Module):
         zj: torch.Tensor,
         aj: torch.Tensor,
     ) -> torch.Tensor:
-        breakpoint()
         arg = self.arg_net(zk)
         cond = self.cond_net(torch.cat([zi, ai, zj, aj], -1))
         return self.combine_net(torch.cat([arg, cond], -1))

@@ -8,7 +8,10 @@ from rich.progress import (
 )
 
 import numpy as np
-from agent import Agent
+
+# from agent import Agent
+from agents.r2d2 import ModelFree
+from agents.selfpred import OPEnd2End, OPPhased, ZPEnd2End, ZPPhased
 from r2d2replaybuffer import r2d2_ReplayMemory
 import torch
 import gym
@@ -30,7 +33,19 @@ def run_exp(args):
     )
 
     ## Initialize agent and buffer
-    agent = Agent(env, args)
+    if args["aux"] == "None":
+        agent = ModelFree(env, args)
+    elif args["aux"] == "ZP":
+        agent = ZPEnd2End(env, args)
+    elif args["aux"] == "OP":
+        agent = OPEnd2End(env, args)
+    elif args["aux"] == "AIS-P2":
+        agent = ZPPhased(env, args)
+    elif args["aux"] == "AIS":
+        agent = OPPhased(env, args)
+    else:
+        raise ValueError("Invalid aux type")
+    # agent = Agent(env, args)
 
     memory = r2d2_ReplayMemory(args["replay_size"], obs_dim, act_dim, args)
 
@@ -113,6 +128,7 @@ def run_exp(args):
                         EPS_up=True,
                         evaluate=False,
                     )
+                    # action = int(action.item())
 
                 next_state, reward, terminated, truncated, _ = env.step(action)  # Step
                 state = next_state["image"].astype(np.float32).reshape(-1)

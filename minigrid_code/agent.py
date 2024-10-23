@@ -1,4 +1,3 @@
-from typing import Dict, Any
 from models import *
 import numpy as np
 import torch
@@ -22,6 +21,7 @@ class Agent(object):
                 self.device = torch.device("cuda")
         else:
             self.device = torch.device("cpu")
+
         self.obs_dim = np.prod(env.observation_space["image"].shape)  # flatten
         self.act_dim = env.action_space.n
         self.gamma = args["gamma"]
@@ -416,7 +416,7 @@ class Agent(object):
                 next_rew_packed.data,
                 batch_size,
             )
-            losses += bisim_loss
+            losses += self.aux_coef * bisim_loss
             metrics["bisim_loss"] = bisim_loss.item()
 
         # 5. Compute Target for Double Q-learning

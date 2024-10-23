@@ -23,6 +23,7 @@ def main():
 
     # Training
     parser.add_argument("--cuda", type=bool, default=True)
+    parser.add_argument("--device", type=str, default="")
     parser.add_argument("--num_steps", type=int, default=4000000)
     ## Freq
     parser.add_argument("--logging_freq", type=int, default=10000)

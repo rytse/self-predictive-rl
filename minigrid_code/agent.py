@@ -14,7 +14,14 @@ class Agent(object):
     def __init__(self, env, args):
         self.args = args
         self.debug = args["debug"]
-        self.device = torch.device("cuda" if args["cuda"] else "cpu")
+
+        if args["cuda"]:
+            if args["device"] != "":
+                self.device = torch.device(args["device"])
+            else:
+                self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
         self.obs_dim = np.prod(env.observation_space["image"].shape)  # flatten
         self.act_dim = env.action_space.n
         self.gamma = args["gamma"]
@@ -400,6 +407,7 @@ class Agent(object):
                 self.bisim_critic_opt.zero_grad()
                 bisim_critic_loss.backward(retain_graph=True)
                 self.bisim_critic_opt.step()
+            metrics["bisim_critic_loss"] = bisim_critic_loss.item()
 
             bisim_loss = self.compute_bisim_encoder_loss(
                 q_z.data,

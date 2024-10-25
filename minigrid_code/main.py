@@ -24,7 +24,7 @@ def main():
     # Training
     parser.add_argument("--cuda", type=bool, default=True)
     parser.add_argument("--device", type=str, default="")
-    parser.add_argument("--num_steps", type=int, default=4000000)
+    parser.add_argument("--num_steps", type=int, default=4_000_000)
     ## Freq
     parser.add_argument("--logging_freq", type=int, default=10000)
     parser.add_argument("--target_update_interval", type=int, default=1)
@@ -43,7 +43,7 @@ def main():
 
     # Representation learning
     parser.add_argument("--aux", type=str, default="None")
-    parser.add_argument("--aux_optim", type=str, default="None")
+    parser.add_argument("--aux_optim", type=str, default="ema")
     parser.add_argument("--aux_coef", type=float, default=0.5)
     parser.add_argument("--aux_lr", type=float, default=1e-3)
     parser.add_argument("--AIS_state_size", type=int, default=128)
@@ -64,7 +64,7 @@ def main():
     ## Bisim
     parser.add_argument("--bisim_gamma", type=float, default=1.0)
     parser.add_argument("--bisim_lr", type=float, default=1e-3)
-    parser.add_argument("--bisim_critic_train_steps", type=int, default=10)
+    parser.add_argument("--bisim_critic_train_steps", type=int, default=20)
 
     args = parser.parse_args()
 

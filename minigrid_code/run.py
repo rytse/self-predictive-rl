@@ -12,6 +12,7 @@ import numpy as np
 # from agent import Agent
 from agents.r2d2 import ModelFree
 from agents.selfpred import OPEnd2End, OPPhased, ZPEnd2End, ZPPhased
+from agent import Agent
 from r2d2replaybuffer import r2d2_ReplayMemory
 import torch
 import gym
@@ -32,7 +33,7 @@ def run_exp(args):
         f"obs_dim={obs_dim} act_dim={act_dim} max_steps={env.max_steps}",
     )
 
-    ## Initialize agent and buffer
+    # Initialize agent and buffer
     if args["aux"] == "None":
         agent = ModelFree(env, args)
     elif args["aux"] == "ZP":
@@ -128,7 +129,6 @@ def run_exp(args):
                         EPS_up=True,
                         evaluate=False,
                     )
-                    # action = int(action.item())
 
                 next_state, reward, terminated, truncated, _ = env.step(action)  # Step
                 state = next_state["image"].astype(np.float32).reshape(-1)

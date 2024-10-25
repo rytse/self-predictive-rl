@@ -157,7 +157,7 @@ class R2D2(ABC):
             return random.randrange(self.act_dim), hidden_p
 
         qf = self.critic(ais_z)[0, 0]
-        greedy_action = torch.argmax(qf)
+        greedy_action = torch.argmax(qf).item()
 
         return greedy_action, hidden_p
 

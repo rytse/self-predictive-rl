@@ -39,7 +39,6 @@ class OP(SelfPred, ABC):
 
 
 class ZPPhased(Phased, ZP):
-
     @torch.compile
     def eval_aux_loss(
         self,

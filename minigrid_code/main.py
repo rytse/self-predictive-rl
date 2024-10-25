@@ -12,7 +12,6 @@ import json
 from run import run_exp
 import logger
 import torch
-import torch._logging
 
 
 def main():
@@ -92,7 +91,6 @@ def main():
         json.dump(params, fp, indent=4)
 
     torch.set_float32_matmul_precision("medium")
-    torch._logging.set_logs(dynamo=0)
 
     ###################
     ### RUN TRAINING

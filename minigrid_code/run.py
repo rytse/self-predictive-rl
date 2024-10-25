@@ -8,10 +8,6 @@ from rich.progress import (
 )
 
 import numpy as np
-
-# from agent import Agent
-from agents.r2d2 import ModelFree
-from agents.selfpred import OPEnd2End, OPPhased, ZPEnd2End, ZPPhased
 from agent import Agent
 from r2d2replaybuffer import r2d2_ReplayMemory
 import torch
@@ -33,21 +29,8 @@ def run_exp(args):
         f"obs_dim={obs_dim} act_dim={act_dim} max_steps={env.max_steps}",
     )
 
-    # Initialize agent and buffer
-    if args["aux"] == "None":
-        agent = ModelFree(env, args)
-    elif args["aux"] == "ZP":
-        agent = ZPEnd2End(env, args)
-    elif args["aux"] == "OP":
-        agent = OPEnd2End(env, args)
-    elif args["aux"] == "AIS-P2":
-        agent = ZPPhased(env, args)
-    elif args["aux"] == "AIS":
-        agent = OPPhased(env, args)
-    else:
-        raise ValueError("Invalid aux type")
-    # agent = Agent(env, args)
-
+    ## Initialize agent and buffer
+    agent = Agent(env, args)
     memory = r2d2_ReplayMemory(args["replay_size"], obs_dim, act_dim, args)
 
     ## Training

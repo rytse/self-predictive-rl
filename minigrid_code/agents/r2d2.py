@@ -323,7 +323,6 @@ class R2D2(ABC):
         )
 
         aux_loss = self.eval_aux_loss(
-            metrics=metrics,
             batch_z=q_z.data,
             batch_act=packed_current_act.data,
             batch_next_z=q_next_z.data,

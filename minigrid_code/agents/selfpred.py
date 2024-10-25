@@ -1,12 +1,10 @@
 from abc import ABC
-from typing import Any, Dict
 
 import torch
 import torch.nn.functional as F
 
-import torch._logging
-
 from agents.r2d2 import R2D2, End2End, Phased
+from models import AISModel
 
 
 class SelfPred(R2D2, ABC):
@@ -42,7 +40,6 @@ class ZPPhased(Phased, ZP):
     @torch.compile
     def eval_aux_loss(
         self,
-        metrics: Dict[str, Any],
         batch_z: torch.Tensor,
         batch_act: torch.Tensor,
         batch_next_z: torch.Tensor,
@@ -76,8 +73,8 @@ class ZPPhased(Phased, ZP):
         ).mean() / self.AIS_state_size  # normalized
         rew_loss = (rew_squared_error.sum(-1) * batch_model_final_flag).mean()
 
-        metrics["zp_loss"] = z_loss.item()
-        metrics["rp_loss"] = rew_loss.item()
+        # metrics["zp_loss"] = z_loss.item()
+        # metrics["rp_loss"] = rew_loss.item()
 
         AIS_loss = self.aux_coef * z_loss + rew_loss
 
@@ -92,7 +89,6 @@ class ZPEnd2End(End2End, ZP):
     @torch.compile
     def eval_aux_loss(
         self,
-        metrics: Dict[str, Any],
         batch_z: torch.Tensor,
         batch_act: torch.Tensor,
         batch_next_z: torch.Tensor,
@@ -125,7 +121,7 @@ class ZPEnd2End(End2End, ZP):
 
         model_loss = model_loss.mean() / self.AIS_state_size  # normalized
 
-        metrics["zp_loss"] = model_loss.item()
+        # metrics["zp_loss"] = model_loss.item()
 
         return model_loss
 
@@ -134,7 +130,6 @@ class OPPhased(Phased, OP):
     @torch.compile
     def eval_aux_loss(
         self,
-        metrics: Dict[str, Any],
         batch_z: torch.Tensor,
         batch_act: torch.Tensor,
         batch_next_z: torch.Tensor,
@@ -158,8 +153,8 @@ class OPPhased(Phased, OP):
         ).mean() / self.obs_dim  # normalized
         rew_loss = (rew_squared_error.sum(-1) * batch_model_final_flag).mean()
 
-        metrics["op_loss"] = obs_loss.item()
-        metrics["rp_loss"] = rew_loss.item()
+        # metrics["op_loss"] = obs_loss.item()
+        # metrics["rp_loss"] = rew_loss.item()
 
         AIS_loss = self.aux_coef * obs_loss + rew_loss
 
@@ -174,7 +169,6 @@ class OPEnd2End(End2End, OP):
     @torch.compile
     def eval_aux_loss(
         self,
-        metrics: Dict[str, Any],
         batch_z: torch.Tensor,
         batch_act: torch.Tensor,
         batch_next_z: torch.Tensor,
@@ -196,6 +190,6 @@ class OPEnd2End(End2End, OP):
 
         model_loss = model_loss.mean() / self.obs_dim  # normalized
 
-        metrics["op_loss"] = model_loss.item()
+        # metrics["op_loss"] = model_loss.item()
 
         return model_loss

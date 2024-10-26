@@ -3,7 +3,7 @@ import glob
 import json
 import pandas as pd
 
-PLOT_INCOMPLETE = True
+PLOT_INCOMPLETE = True # False
 
 def main():
 
@@ -18,9 +18,14 @@ def main():
         ts = cfg["logdir"].split("/")[-1]
 
         res_file = cfg_file.replace("config.json", "progress.csv")
+        if not glob.glob(res_file):
+            print(f"Skipping {env} {aux} {n_steps} because it is missing")
+            continue
+        else:
+            print(f"Loading {env} {aux} {n_steps} from {res_file}")
         df = pd.read_csv(res_file)
 
-        if not PLOT_INCOMPLETE and n_steps not in df["_env_steps"]:
+        if not PLOT_INCOMPLETE and str(int(n_steps)) not in df["env_steps"]:
             print(f"Skipping {env} {aux} {n_steps} because it is incomplete")
             continue
 

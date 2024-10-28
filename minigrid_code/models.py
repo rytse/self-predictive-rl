@@ -152,8 +152,93 @@ class QNetwork_discrete(nn.Module):
         return x1
 
 
+class MLP(nn.Module):
+    def __init__(self, input_dim: int, output_dim: int, hidden_dim: int):
+        super(MLP, self).__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim),
+        )
+
+        self.apply(weights_init_)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+class WassersteinModel(nn.Module):
+    def __init__(
+        self,
+        z_dim: int,
+        a_dim: int,
+        hidden_dim: int,
+    ):
+        super().__init__()
+
+        self.arg_net = nn.Sequential(
+            spectral_norm(nn.Linear(z_dim, hidden_dim)),
+            nn.ReLU(),
+        )
+        self.cond_net = nn.Sequential(
+            nn.Linear(a_dim, hidden_dim),
+            nn.ReLU(),
+        )
+        self.combine_net = nn.Sequential(
+            spectral_norm(nn.Linear(2 * hidden_dim, hidden_dim)),
+            nn.ReLU(),
+            spectral_norm(nn.Linear(hidden_dim, z_dim)),
+        )
+
+    def forward(
+        self,
+        z: torch.Tensor,
+        a: torch.Tensor,
+    ) -> torch.Tensor:
+        arg = self.arg_net(z)
+        cond = self.cond_net(a)
+        return self.combine_net(torch.cat([arg, cond], -1))
+
+
 # TODO don't repeate code
-class BisimCritic(nn.Module):
+class WassersteinCritic(nn.Module):
+    def __init__(
+        self,
+        z_dim: int,
+        a_dim: int,
+        hidden_dim: int,
+    ):
+        super().__init__()
+
+        self.arg_net = nn.Sequential(
+            spectral_norm(nn.Linear(z_dim, hidden_dim)),
+            nn.ReLU(),
+        )
+        self.cond_net = nn.Sequential(
+            nn.Linear(z_dim + a_dim, hidden_dim),
+            nn.ReLU(),
+        )
+        self.combine_net = nn.Sequential(
+            spectral_norm(nn.Linear(2 * hidden_dim, hidden_dim)),
+            nn.ReLU(),
+            spectral_norm(nn.Linear(hidden_dim, 1)),
+        )
+
+    def forward(
+        self,
+        zk: torch.Tensor,
+        zi: torch.Tensor,
+        ai: torch.Tensor,
+    ) -> torch.Tensor:
+        arg = self.arg_net(zk)
+        cond = self.cond_net(torch.cat([zi, ai], -1))
+        return self.combine_net(torch.cat([arg, cond], -1))
+
+
+class BisimWassersteinCritic(nn.Module):
     def __init__(
         self,
         z_dim: int,

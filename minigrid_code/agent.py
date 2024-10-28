@@ -29,20 +29,40 @@ class Agent(object):
         self.target_update_interval = args["target_update_interval"]
 
         self.aux = args["aux"]
-        assert self.aux in ["None", "ZP", "OP", "AIS", "AIS-P2", "bisim_critic"]
+        assert self.aux in [
+            "None",
+            "ZP",
+            "OP",
+            "AIS",
+            "AIS-P2",
+            "bisim_critic",
+            "ZP_critic",
+        ]
         self.AIS_state_size = args["AIS_state_size"]
 
-        if self.aux == "bisim_critic":
+        if "critic" in self.aux:
             self.bisim_gamma = args["bisim_gamma"]
             self.bisim_critic_train_steps = args["bisim_critic_train_steps"]
-            self.bisim_critic = torch.compile(
-                BisimCritic(
-                    self.AIS_state_size, self.act_dim, self.AIS_state_size // 2
-                ).to(self.device),
-                mode="default",
-            )
-            self.bisim_critic_opt = RMSprop(
-                self.bisim_critic.parameters(), lr=args["bisim_lr"]
+
+            if self.aux == "ZP_critic":
+                self.wasserstein_critic = torch.compile(
+                    WassersteinCritic(
+                        self.AIS_state_size, self.act_dim, self.AIS_state_size // 2
+                    ),
+                    mode="default",
+                ).to(self.device)
+            elif self.aux == "bisim_critic":
+                self.wasserstein_critic = torch.compile(
+                    BisimWassersteinCritic(
+                        self.AIS_state_size, self.act_dim, self.AIS_state_size // 2
+                    ),
+                    mode="default",
+                ).to(self.device)
+            else:
+                raise ValueError(self.aux)
+
+            self.wasserstein_critic_opt = RMSprop(
+                self.wasserstein_critic.parameters(), lr=args["bisim_lr"]
             )
 
         self.encoder = SeqEncoder(self.obs_dim, self.act_dim, self.AIS_state_size).to(
@@ -92,7 +112,7 @@ class Agent(object):
             )
         elif self.aux == "None":  # model-free R2D2
             self.model = None
-        else:
+        elif self.aux in ["ZP", "OP"]:
             self.model = torch.compile(
                 LatentModel(
                     self.obs_dim if self.aux == "OP" else self.AIS_state_size,
@@ -105,6 +125,22 @@ class Agent(object):
                 self.model.parameters(),
                 lr=args["aux_lr"],
             )
+        elif self.aux == "ZP_critic":
+            model_dim = self.AIS_state_size
+            self.model = torch.compile(
+                WassersteinModel(model_dim, self.act_dim, model_dim // 2).to(
+                    self.device
+                ),
+                mode="default",
+            )
+            self.AIS_optim = Adam(
+                self.model.parameters(),
+                lr=args["aux_lr"],
+            )
+        elif self.aux == "bisim_critic":
+            self.model = None
+        else:
+            raise ValueError(self.aux)
 
         logger.log(self.encoder, self.model, self.critic)
 
@@ -335,7 +371,12 @@ class Agent(object):
                 enforce_sorted=False,
             )
 
-        if self.aux in ["AIS-P2", "ZP", "bisim_critic"]:  # prepare next_z targets
+        if self.aux in [
+            "AIS-P2",
+            "ZP",
+            "ZP_critic",
+            "bisim_critic",
+        ]:  # prepare next_z targets
             q_next_z = pack_padded_sequence(
                 unpacked_ais_z[:, 1:],  # shift one step
                 list(batch_learn_len),  # we only use first L hidden states
@@ -396,6 +437,27 @@ class Agent(object):
                 batch_next_z_target=q_next_z_target.data,
                 batch_final_flag=packed_final.data,
             )
+        elif self.aux == "ZP_critic":
+            for _ in range(self.bisim_critic_train_steps):
+                zp_critic_loss = self.compute_ZP_critic_critic_loss(
+                    q_z.data,
+                    packed_current_act.data,
+                    q_next_z.data,
+                    q_next_z_target.data,
+                ).mean()
+                self.wasserstein_critic_opt.zero_grad()
+                zp_critic_loss.backward(retain_graph=True)
+                self.wasserstein_critic_opt.step()
+            metrics["zp_critic_loss"] = zp_critic_loss.item()
+
+            zp_enc_loss = self.compute_ZP_critic_encoder_loss(
+                q_z.data,
+                packed_current_act.data,
+                q_next_z.data,
+                q_next_z_target.data,
+            ).mean()
+            losses += self.aux_coef * zp_enc_loss
+            metrics["zp_loss"] = zp_enc_loss.item()
         elif self.aux == "bisim_critic":
             for _ in range(self.bisim_critic_train_steps):
                 bisim_critic_loss = self.compute_bisim_critic_loss(
@@ -404,9 +466,9 @@ class Agent(object):
                     q_next_z.data,
                     batch_size,
                 )
-                self.bisim_critic_opt.zero_grad()
+                self.wasserstein_critic_opt.zero_grad()
                 bisim_critic_loss.backward(retain_graph=True)
-                self.bisim_critic_opt.step()
+                self.wasserstein_critic_opt.step()
             metrics["bisim_critic_loss"] = bisim_critic_loss.item()
 
             bisim_loss = self.compute_bisim_encoder_loss(
@@ -631,6 +693,57 @@ class Agent(object):
         return model_loss
 
     @torch.compile
+    def compute_ZP_critic_critic_loss(
+        self,
+        batch_z: torch.Tensor,
+        batch_act: torch.Tensor,
+        batch_next_z: torch.Tensor,
+        batch_next_z_target: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.aux_optim == "online":
+            true_next_z = batch_next_z
+        elif self.aux_optim == "detach":
+            true_next_z = batch_next_z.detach()
+        elif self.aux_optim == "ema":
+            true_next_z = batch_next_z_target
+        else:
+            raise ValueError(self.aux_optim)
+
+        batch_act_onehot = F.one_hot(batch_act.long(), self.act_dim).float()
+
+        critic_seen = self.wasserstein_critic(true_next_z, batch_z, batch_act_onehot)
+        critic_pred = self.model(
+            batch_z,
+            batch_act_onehot,
+        )
+
+        return F.mse_loss(critic_pred, critic_seen)
+
+    @torch.compile
+    def compute_ZP_critic_encoder_loss(
+        self,
+        batch_z: torch.Tensor,
+        batch_act: torch.Tensor,
+        batch_next_z: torch.Tensor,
+        batch_next_z_target: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.aux_optim == "online":
+            true_next_z = batch_next_z
+        elif self.aux_optim == "detach":
+            true_next_z = batch_next_z.detach()
+        elif self.aux_optim == "ema":
+            true_next_z = batch_next_z_target
+        else:
+            raise ValueError(self.aux_optim)
+
+        batch_act_onehot = F.one_hot(batch_act.long(), self.act_dim).float()
+
+        critic_seen = self.wasserstein_critic(true_next_z, batch_z, batch_act_onehot)
+        critic_pred = self.model(batch_z, batch_act_onehot)
+
+        return critic_pred - critic_seen
+
+    @torch.compile
     def compute_bisim_critic_loss(
         self,
         batch_z: torch.Tensor,
@@ -643,14 +756,14 @@ class Agent(object):
             idxs_i = torch.randperm(batch_size)
             idxs_j = torch.arange(0, batch_size)
 
-        critique_i = self.bisim_critic(
+        critique_i = self.wasserstein_critic(
             batch_next_z[idxs_i],
             batch_z[idxs_i],
             batch_act_onehot[idxs_i],
             batch_z[idxs_j],
             batch_act_onehot[idxs_j],
         )
-        critique_j = self.bisim_critic(
+        critique_j = self.wasserstein_critic(
             batch_next_z[idxs_j],
             batch_z[idxs_i],
             batch_act_onehot[idxs_i],
@@ -677,14 +790,14 @@ class Agent(object):
 
         z_dist = torch.norm(batch_z[idxs_i] - batch_z[idxs_j], dim=1).view(-1, 1)
 
-        critique_i = self.bisim_critic(
+        critique_i = self.wasserstein_critic(
             batch_next_z[idxs_i],
             batch_z[idxs_i],
             batch_act_onehot[idxs_i],
             batch_z[idxs_j],
             batch_act_onehot[idxs_j],
         )
-        critique_j = self.bisim_critic(
+        critique_j = self.wasserstein_critic(
             batch_next_z[idxs_j],
             batch_z[idxs_i],
             batch_act_onehot[idxs_i],

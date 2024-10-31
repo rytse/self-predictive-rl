@@ -12,7 +12,7 @@ usage() {
 if [ ! -f "envs.txt" ]; then
     echo "Error: envs.txt file not found!"
     exit 1
-}
+fi
 
 # Count total number of non-empty and non-commented lines
 total_envs=$(grep -v '^#' envs.txt | grep -v '^[[:space:]]*$' | wc -l)

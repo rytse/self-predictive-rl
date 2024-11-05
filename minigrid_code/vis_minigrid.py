@@ -3,7 +3,8 @@ import glob
 import json
 import pandas as pd
 
-PLOT_INCOMPLETE = True # False
+PLOT_INCOMPLETE = True  # False
+
 
 def main():
 
@@ -13,7 +14,7 @@ def main():
     for cfg_file in cfg_files:
         cfg = json.load(open(cfg_file))
         env = cfg["env_name"]
-        aux = cfg["aux"]   
+        aux = cfg["aux"]
         n_steps = cfg["num_steps"]
         ts = cfg["logdir"].split("/")[-1]
 

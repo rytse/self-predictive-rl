@@ -31,7 +31,7 @@ online_encoder_actorcritic: true
 # Defaults for bisim algos
 bisim_gamma: 1.0
 bisim_critic_train_steps: 10
-bisim_deterministic: true
+bisim_deterministic: false
 bisim_norm_reward: false
 
 #learning 

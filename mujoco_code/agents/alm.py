@@ -210,7 +210,7 @@ class AlmAgent(object):
 
         if self.aux == "bisim_critic":
             self.bisim_critic_opt = torch.optim.RMSprop(
-                self.bisim_critic.parameters(), lr=lr["model"]
+                self.bisim_critic.parameters(), lr=lr["bisim_critic"]
             )
 
         if not self.disable_reward:

@@ -8,8 +8,10 @@ import torch.nn.functional as F
 from torch.linalg import matrix_rank, cond
 import numpy as np
 import numpy.typing as npt
+
 import utils
 from utils import logger
+from utils.torch_utils import make_normalizer
 from models import *
 
 
@@ -37,7 +39,22 @@ class AlmAgent(object):
         self.disable_reward = cfg.disable_reward
         self.freeze_critic = cfg.freeze_critic
         self.online_encoder_actorcritic = cfg.online_encoder_actorcritic
-        self.bisim_norm_reward = cfg.bisim_norm_reward
+        if cfg.bisim_norm_reward:
+            self.reward_normalizer = make_normalizer(
+                input_range=(reward_low, reward_high),
+                output_range=(0.0, 1.0),
+                backend="np",
+            )
+        else:
+            self.reward_normalizer = lambda x: x
+        if cfg.bisim_norm_action:
+            self.action_normalizer = make_normalizer(
+                input_range=(action_low, action_high),
+                output_range=(-1.0, 1.0),
+                backend="torch",
+            )
+        else:
+            self.action_normalizer = lambda x: x
 
         # bisim
         self.bisim_gamma = cfg.bisim_gamma
@@ -479,22 +496,24 @@ class AlmAgent(object):
             next_state_batch = next_state_seq[0]
             z_next_dist = self._get_z_next_dist(next_state_batch)
 
+            norm_action_batch = self.action_normalizer(action_batch)
+
             idxs_i = torch.randperm(self.batch_size)
             idxs_j = torch.arange(0, self.batch_size)
 
         critique_i = self.bisim_critic(
             z_next_dist.mean[idxs_i],
             z_batch[idxs_i],
-            action_batch[idxs_i],
+            norm_action_batch[idxs_i],
             z_batch[idxs_j],
-            action_batch[idxs_j],
+            norm_action_batch[idxs_j],
         )
         critique_j = self.bisim_critic(
             z_next_dist.mean[idxs_j],
             z_batch[idxs_i],
-            action_batch[idxs_i],
+            norm_action_batch[idxs_i],
             z_batch[idxs_j],
-            action_batch[idxs_j],
+            norm_action_batch[idxs_j],
         )
 
         bisim_critic_loss = -torch.mean(critique_i - critique_j)  # signed!
@@ -517,44 +536,42 @@ class AlmAgent(object):
         idxs_i = torch.randperm(self.batch_size)
         idxs_j = torch.arange(0, self.batch_size)
 
-        z_dist = torch.norm(z_batch[idxs_i] - z_batch[idxs_j], dim=-1).view(-1, 1)
-        r_dist = torch.abs(reward_batch[idxs_i] - reward_batch[idxs_j]).view(-1, 1)
+        z_dist = torch.norm(z_batch[idxs_i] - z_batch[idxs_j], dim=-1).view(-1, 1) / 2.0
+        r_dist = self.reward_normalizer(
+            torch.abs(reward_batch[idxs_i] - reward_batch[idxs_j]).view(-1, 1)
+        )
+
+        norm_action_batch = self.action_normalizer(action_batch)
 
         if "critic" in self.aux:
             critique_i = self.bisim_critic(
                 z_next_dist.mean[idxs_i],
                 z_batch[idxs_i],
-                action_batch[idxs_i],  # TODO normalize action inputs?
+                norm_action_batch[idxs_i],  # TODO normalize action inputs?
                 z_batch[idxs_j],
-                action_batch[idxs_j],
+                norm_action_batch[idxs_j],
             )
             critique_j = self.bisim_critic(
                 z_next_dist.mean[idxs_j],
                 z_batch[idxs_i],
-                action_batch[idxs_i],
+                norm_action_batch[idxs_i],
                 z_batch[idxs_j],
-                action_batch[idxs_j],
+                norm_action_batch[idxs_j],
             )
-            transition_dist = torch.abs(critique_i - critique_j).view(-1, 1)
+            transition_dist = torch.abs(critique_i - critique_j).view(-1, 1) / 2.0
         else:
-            transition_dist = torch.sqrt(
-                (z_next_dist.mean[idxs_i] - z_next_dist.mean[idxs_j]).pow(2)
-                + (z_next_dist.stddev[idxs_i] - z_next_dist.stddev[idxs_j]).pow(2)
+            transition_dist = (
+                torch.sqrt(
+                    (z_next_dist.mean[idxs_i] - z_next_dist.mean[idxs_j]).pow(2)
+                    + (z_next_dist.stddev[idxs_i] - z_next_dist.stddev[idxs_j]).pow(2)
+                )
+                / 2.0
             )
 
-        if self.bisim_norm_reward:
-            z_dist_final = z_dist / 2.0
-            r_dist_final = r_dist / (self.reward_high - self.reward_low)
-            transition_dist_final = transition_dist / 2.0
-        else:
-            z_dist_final = z_dist
-            r_dist_final = r_dist
-            transition_dist_final = transition_dist
+        bisimilarity = r_dist + self.bisim_gamma * transition_dist
+        bisim_loss = torch.square(z_dist - bisimilarity)
 
-        bisimilarity = r_dist_final + self.bisim_gamma * transition_dist_final
-        bisim_loss = torch.square(z_dist_final - bisimilarity)
-
-        return bisim_loss, z_dist_final, r_dist_final, transition_dist_final
+        return bisim_loss, z_dist, r_dist, transition_dist
 
     def _aux_loss(
         self,

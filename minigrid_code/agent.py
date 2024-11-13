@@ -717,7 +717,7 @@ class Agent(object):
             batch_act_onehot,
         )
 
-        return F.mse_loss(critic_pred, critic_seen)
+        return critic_pred - critic_seen
 
     @torch.compile
     def compute_ZP_critic_encoder_loss(
@@ -741,7 +741,7 @@ class Agent(object):
         critic_seen = self.wasserstein_critic(true_next_z, batch_z, batch_act_onehot)
         critic_pred = self.model(batch_z, batch_act_onehot)
 
-        return critic_pred - critic_seen
+        return F.mse_loss(critic_pred, critic_seen)
 
     @torch.compile
     def compute_bisim_critic_loss(

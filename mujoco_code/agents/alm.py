@@ -119,7 +119,9 @@ class AlmAgent(object):
         model_hidden_dims: int,
     ) -> None:
 
-        if "bisim" in self.aux:
+        if self.aux == "bisim":
+            EncoderClass, ModelClass = StoEncoder, StoModel
+        elif self.aux == "bisim_critic":
             if self.bisim_deterministic:
                 EncoderClass, ModelClass = DetEncoder, DetModel
             else:

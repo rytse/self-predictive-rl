@@ -289,7 +289,7 @@ class StoActor(nn.Module):
         return dist
 
 
-class BisimCritic(nn.Module):
+class BisimWassCritic(nn.Module):
     def __init__(
         self,
         z_dim: int,
@@ -328,4 +328,38 @@ class BisimCritic(nn.Module):
     ) -> torch.Tensor:
         arg = self.arg_net(zk)
         cond = self.cond_net(torch.cat([zi, ai, zj, aj], -1))
+        return self.combine_net(torch.cat([arg, cond], -1))
+
+
+class ZPWassersteinCritic(nn.Module):
+    def __init__(
+        self,
+        z_dim: int,
+        a_dim: int,
+        hidden_dim: int,
+    ):
+        super().__init__()
+
+        self.arg_net = nn.Sequential(
+            spectral_norm(nn.Linear(z_dim, hidden_dim)),
+            nn.ReLU(),
+        )
+        self.cond_net = nn.Sequential(
+            nn.Linear(z_dim + a_dim, hidden_dim),
+            nn.ReLU(),
+        )
+        self.combine_net = nn.Sequential(
+            spectral_norm(nn.Linear(2 * hidden_dim, hidden_dim)),
+            nn.ReLU(),
+            spectral_norm(nn.Linear(hidden_dim, 1)),
+        )
+
+    def forward(
+        self,
+        zk: torch.Tensor,
+        zi: torch.Tensor,
+        ai: torch.Tensor,
+    ) -> torch.Tensor:
+        arg = self.arg_net(zk)
+        cond = self.cond_net(torch.cat([zi, ai], -1))
         return self.combine_net(torch.cat([arg, cond], -1))

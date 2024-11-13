@@ -39,7 +39,7 @@ class AlmAgent(object):
         self.disable_reward = cfg.disable_reward
         self.freeze_critic = cfg.freeze_critic
         self.online_encoder_actorcritic = cfg.online_encoder_actorcritic
-        if cfg.bisim_norm_reward:
+        if cfg.wass_norm_reward:
             self.reward_normalizer = make_normalizer(
                 input_range=(reward_low, reward_high),
                 output_range=(0.0, 1.0),
@@ -47,7 +47,7 @@ class AlmAgent(object):
             )
         else:
             self.reward_normalizer = lambda x: x
-        if cfg.bisim_norm_action:
+        if cfg.wass_norm_action:
             self.action_normalizer = make_normalizer(
                 input_range=(action_low, action_high),
                 output_range=(-1.0, 1.0),
@@ -56,10 +56,10 @@ class AlmAgent(object):
         else:
             self.action_normalizer = lambda x: x
 
-        # bisim
-        self.bisim_gamma = cfg.bisim_gamma
-        self.bisim_critic_train_steps = cfg.bisim_critic_train_steps
-        self.bisim_deterministic = cfg.bisim_deterministic
+        # Wasserstein critic
+        self.wass_gamma = cfg.wass_gamma
+        self.was_critic_train_steps = cfg.wass_critic_train_steps
+        self.wass_deterministic = cfg.wass_deterministic
 
         # aux
         self.aux = cfg.aux
@@ -122,15 +122,17 @@ class AlmAgent(object):
         if self.aux == "bisim":
             EncoderClass, ModelClass = StoEncoder, StoModel
         elif self.aux == "bisim_critic":
-            if self.bisim_deterministic:
+            if self.wass_deterministic:
                 EncoderClass, ModelClass = DetEncoder, DetModel
             else:
                 EncoderClass, ModelClass = StoEncoder, StoModel
         else:
             if self.aux in [None, "l2", "op-l2"]:
                 EncoderClass, ModelClass = DetEncoder, DetModel
-            else:  # fkl, rkl, op-kl
+            elif self.aux in ["fkl", "rkl", "op-kl"]:
                 EncoderClass, ModelClass = StoEncoder, StoModel
+            else:
+                raise ValueError(self.aux)
 
         self.encoder = EncoderClass(num_states, hidden_dims, latent_dims).to(
             self.device
@@ -159,10 +161,20 @@ class AlmAgent(object):
         utils.hard_update(self.critic_target, self.critic)
 
         if self.aux == "bisim_critic":
-            self.bisim_critic = torch.compile(
-                BisimCritic(latent_dims, num_actions, hidden_dims).to(self.device),
+            self.wass_critic = torch.compile(
+                BisimWassCritic(latent_dims, num_actions, hidden_dims).to(self.device),
                 mode="default",
             )
+        # elif self.aux == "zp_critic":
+        #     self.wass_critic = torch.compile(
+        #         ZPWassersteinCritic(latent_dims, num_actions, hidden_dims).to(self.device),
+        #         mode="default",
+        #     )
+        # elif self.aux == "op_critic":
+        #     self.wass_critic = torch.compile(
+        #         ZPWassersteinCritic(num_states, num_actions, hidden_dims).to(self.device),
+        #         mode="default",
+        #     )
 
         self.actor = torch.compile(
             Actor(
@@ -210,9 +222,9 @@ class AlmAgent(object):
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=lr["actor"])
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=lr["critic"])
 
-        if self.aux == "bisim_critic":
-            self.bisim_critic_opt = torch.optim.RMSprop(
-                self.bisim_critic.parameters(), lr=lr["bisim_critic"]
+        if self.aux in ["bisim_critic", "zp_critic", "op_critic"]:
+            self.wass_critic_opt = torch.optim.RMSprop(
+                self.wass_critic.parameters(), lr=lr["bisim_critic"]
             )
 
         if not self.disable_reward:
@@ -350,14 +362,16 @@ class AlmAgent(object):
         reward_seq = torch.FloatTensor(reward_seq).to(self.device)  # (T, B)
         done_seq = torch.FloatTensor(done_seq).to(self.device)  # (T, B)
 
-        if self.aux == "bisim_critic":
-            for _ in range(self.bisim_critic_train_steps):
-                self.bisim_critic_opt.zero_grad()
-                bisim_critic_loss = self.bisim_critic_loss(
+        wass_critic_loss = None
+
+        if self.aux in ["bisim_critic", "zp_critic", "op_critic"]:
+            for _ in range(self.was_critic_train_steps):
+                self.wass_critic_opt.zero_grad()
+                wass_critic_loss = self.bisim_wass_critic_loss(
                     state_seq, action_seq, next_state_seq
                 )
-                bisim_critic_loss.backward()
-                self.bisim_critic_opt.step()
+                wass_critic_loss.backward()
+                self.wass_critic_opt.step()
 
         alm_loss, aux_loss = self.alm_loss(
             state_seq, action_seq, next_state_seq, reward_seq, std, metrics
@@ -375,8 +389,8 @@ class AlmAgent(object):
             metrics["model_grad_norm"] = model_grad_norm.item()
 
             metrics["aux_loss"] = aux_loss.mean().item()
-            if self.aux == "bisim_critic":
-                metrics["bisim_critic_loss"] = bisim_critic_loss.mean().item()
+            if wass_critic_loss is not None:
+                metrics["wass_critic_loss"] = wass_critic_loss.mean().item()
 
         if self.aux_constraint is not None:
             self.coef_opt.zero_grad()
@@ -485,7 +499,7 @@ class AlmAgent(object):
             raise ValueError(self.aux_optim)
 
     @torch.compile
-    def bisim_critic_loss(
+    def bisim_wass_critic_loss(
         self,
         state_seq: torch.Tensor,
         action_seq: torch.Tensor,
@@ -503,14 +517,14 @@ class AlmAgent(object):
             idxs_i = torch.randperm(self.batch_size)
             idxs_j = torch.arange(0, self.batch_size)
 
-        critique_i = self.bisim_critic(
+        critique_i = self.wass_critic(
             z_next_dist.mean[idxs_i],
             z_batch[idxs_i],
             norm_action_batch[idxs_i],
             z_batch[idxs_j],
             norm_action_batch[idxs_j],
         )
-        critique_j = self.bisim_critic(
+        critique_j = self.wass_critic(
             z_next_dist.mean[idxs_j],
             z_batch[idxs_i],
             norm_action_batch[idxs_i],
@@ -546,14 +560,14 @@ class AlmAgent(object):
         norm_action_batch = self.action_normalizer(action_batch)
 
         if "critic" in self.aux:
-            critique_i = self.bisim_critic(
+            critique_i = self.wass_critic(
                 z_next_dist.mean[idxs_i],
                 z_batch[idxs_i],
                 norm_action_batch[idxs_i],  # TODO normalize action inputs?
                 z_batch[idxs_j],
                 norm_action_batch[idxs_j],
             )
-            critique_j = self.bisim_critic(
+            critique_j = self.wass_critic(
                 z_next_dist.mean[idxs_j],
                 z_batch[idxs_i],
                 norm_action_batch[idxs_i],
@@ -570,7 +584,7 @@ class AlmAgent(object):
                 / 2.0
             )
 
-        bisimilarity = r_dist + self.bisim_gamma * transition_dist
+        bisimilarity = r_dist + self.wass_gamma * transition_dist
         bisim_loss = torch.square(z_dist - bisimilarity)
 
         return bisim_loss, z_dist, r_dist, transition_dist
@@ -601,7 +615,7 @@ class AlmAgent(object):
 
             return distance, None
 
-        if "bisim" in self.aux:
+        if self.aux in ["bisim", "bisim_critic"]:
             z_next_prior_sample = None
             (
                 distance,

@@ -28,12 +28,12 @@ disable_reward: true
 freeze_critic: true
 online_encoder_actorcritic: true
 
-# Defaults for bisim algos
-bisim_gamma: 1.0
-bisim_critic_train_steps: 1
-bisim_deterministic: true
-bisim_norm_reward: true
-bisim_norm_action: true
+# Defaults for Wasserstein critic algos
+wass_gamma: 1.0
+wass_critic_train_steps: 1
+wass_deterministic: true
+wass_norm_reward: true
+wass_norm_action: true
 
 #learning 
 gamma: 0.99

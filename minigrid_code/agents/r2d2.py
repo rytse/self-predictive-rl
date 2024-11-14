@@ -47,7 +47,10 @@ class R2D2(ABC):
 
         self.device = torch.device(args["device"])
 
-        self.obs_dim = np.prod(env.observation_space["image"].shape)  # flatten
+        if isinstance(env.observation_space, Dict):
+            self.obs_dim = np.prod(env.observation_space["image"].shape)  # flatten
+        else:
+            self.obs_dim = np.prod(env.observation_space.shape)
         self.act_dim = env.action_space.n  # n discrete actions. will be 1-hot encoded
         self.AIS_state_size = args["AIS_state_size"]  # TODO rename z_dim
         self.hidden_size = args["hidden_size"]

@@ -1,3 +1,4 @@
+from typing import Dict
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -18,16 +19,26 @@ import logger
 
 def run_exp(args):
     ## Create env
-    assert "MiniGrid-" in args["env_name"]
+    # assert "MiniGrid-" in args["env_name"]
     env = gym.make(args["env_name"])
     test_env = gym.make(args["env_name"])
 
-    obs_dim = np.prod(env.observation_space["image"].shape)  # only use image obs
+    if isinstance(env.observation_space, Dict):
+        obs_dim = np.prod(env.observation_space["image"].shape)  # only use image obs
+    else:
+        obs_dim = np.prod(env.observation_space.shape)
     act_dim = env.action_space.n  # discrete action
-    logger.log(
-        env.observation_space["image"],
-        f"obs_dim={obs_dim} act_dim={act_dim} max_steps={env.max_steps}",
-    )
+    max_steps = env.max_steps if hasattr(env, "max_steps") else None
+    if isinstance(env.observation_space, Dict):
+        logger.log(
+            env.observation_space["image"],
+            f"obs_dim={obs_dim} act_dim={act_dim} max_steps={max_steps}",
+        )
+    else:
+        logger.log(
+            env.observation_space,
+            f"obs_dim={obs_dim} act_dim={act_dim} max_steps={max_steps}",
+        )
 
     ## Initialize agent and buffer
     agent = Agent(env, args)
@@ -61,7 +72,12 @@ def run_exp(args):
             hidden_p = agent.get_initial_hidden()
             action = -1  # placeholder
             reward = 0
-            state = env.reset()[0]["image"].astype(np.float32).reshape(-1)
+
+            obs = env.reset()[0]
+            if isinstance(obs, Dict):
+                state = obs["image"].astype(np.float32).reshape(-1)
+            else:
+                state = obs.astype(np.float32).reshape(-1)
 
             ep_hiddens = [hidden_p]  # z[-1]
             ep_actions = [action]  # a[-1]
@@ -114,7 +130,10 @@ def run_exp(args):
                     )
 
                 next_state, reward, terminated, truncated, _ = env.step(action)  # Step
-                state = next_state["image"].astype(np.float32).reshape(-1)
+                if isinstance(next_state, Dict):
+                    state = next_state["image"].astype(np.float32).reshape(-1)
+                else:
+                    state = next_state.astype(np.float32).reshape(-1)
 
                 ep_hiddens.append(hidden_p)  # z[t]
                 ep_actions.append(action)  # a[t]
@@ -182,7 +201,11 @@ def log_and_test(
         hidden_p = agent.get_initial_hidden()
         action = -1  # placeholder
         reward = 0
-        state = env.reset()[0]["image"].astype(np.float32).reshape(-1)
+        obs = env.reset()[0]
+        if isinstance(obs, Dict):
+            state = obs["image"].astype(np.float32).reshape(-1)
+        else:
+            state = obs.astype(np.float32).reshape(-1)
 
         while True:
             action, hidden_p = agent.select_action(
@@ -192,7 +215,10 @@ def log_and_test(
             metrics["return"] += reward
             metrics["length"] += 1
 
-            state = next_state["image"].astype(np.float32).reshape(-1)
+            if isinstance(next_state, Dict):
+                state = next_state["image"].astype(np.float32).reshape(-1)
+            else:
+                state = next_state.astype(np.float32).reshape(-1)
 
             if terminated or truncated:
                 break

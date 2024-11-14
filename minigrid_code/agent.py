@@ -1,3 +1,4 @@
+from typing import Dict
 from models import *
 import numpy as np
 import torch
@@ -22,7 +23,10 @@ class Agent(object):
         else:
             self.device = torch.device("cpu")
 
-        self.obs_dim = np.prod(env.observation_space["image"].shape)  # flatten
+        if isinstance(env.observation_space, Dict):
+            self.obs_dim = np.prod(env.observation_space["image"].shape)  # flatten
+        else:
+            self.obs_dim = np.prod(env.observation_space.shape)
         self.act_dim = env.action_space.n
         self.gamma = args["gamma"]
         self.tau = args["tau"]

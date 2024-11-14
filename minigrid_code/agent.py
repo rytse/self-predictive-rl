@@ -37,10 +37,11 @@ class Agent(object):
             "AIS-P2",
             "bisim",
             "bisim_critic",
+            "zp_critic",
         ]
         self.AIS_state_size = args["AIS_state_size"]
 
-        if self.aux in ["bisim", "bisim_critic"]:
+        if self.aux in ["zp_critic", "bisim_critic"]:  # TODO "wass_gamma," etc
             self.bisim_gamma = args["bisim_gamma"]
             self.bisim_critic_train_steps = args["bisim_critic_train_steps"]
 
@@ -52,7 +53,19 @@ class Agent(object):
                 mode="default",
             ).to(self.device)
             self.wasserstein_critic_opt = RMSprop(
-                self.wasserstein_critic.parameters(), lr=args["bisim_lr"]
+                self.wasserstein_critic.parameters(),
+                lr=args["bisim_lr"],  # TODO "wass_lr"
+            )
+        elif self.aux == "zp_critic":
+            self.wasserstein_critic = torch.compile(
+                WassersteinCritic(
+                    self.AIS_state_size, self.act_dim, self.AIS_state_size // 2
+                ),
+                mode="default",
+            ).to(self.device)
+            self.wasserstein_critic_opt = RMSprop(
+                self.wasserstein_critic.parameters(),
+                lr=args["bisim_lr"],  # TODO "wass_lr"
             )
 
         self.encoder = SeqEncoder(self.obs_dim, self.act_dim, self.AIS_state_size).to(
@@ -117,6 +130,20 @@ class Agent(object):
             )
         elif self.aux == "bisim_critic":
             self.model = None
+        elif self.aux == "zp_critic":
+            self.model = torch.compile(
+                GenLatentModel(
+                    self.AIS_state_size,
+                    self.act_dim,
+                    self.AIS_state_size,
+                    self.AIS_state_size // 2,
+                ).to(self.device),
+                mode="default",
+            )
+            self.AIS_optim = Adam(
+                self.model.parameters(),
+                lr=args["aux_lr"],
+            )
         elif self.aux == "bisim":
             self.model = torch.compile(
                 StoLatentModel(
@@ -338,7 +365,12 @@ class Agent(object):
                 enforce_sorted=False,
             )  # o'
 
-        if self.aux in ["AIS", "AIS-P2", "bisim", "bisim_critic"]:  # prepare reward targets
+        if self.aux in [
+            "AIS",
+            "AIS-P2",
+            "bisim",
+            "bisim_critic",
+        ]:  # prepare reward targets
             next_rew = (
                 torch.from_numpy(batch_model_target_reward)
                 .to(self.device)
@@ -364,6 +396,7 @@ class Agent(object):
             "AIS-P2",
             "ZP",
             "bisim_critic",
+            "zp_critic",
         ]:  # prepare next_z targets
             q_next_z = pack_padded_sequence(
                 unpacked_ais_z[:, 1:],  # shift one step
@@ -447,6 +480,25 @@ class Agent(object):
             )
             losses += self.aux_coef * bisim_loss
             metrics["bisim_loss"] = bisim_loss.item()
+        elif self.aux == "zp_critic":
+            for _ in range(self.bisim_critic_train_steps):
+                zp_critic_loss = self.compute_zp_critic_critic_loss(
+                    q_z.data,
+                    packed_current_act.data,
+                    q_next_z.data,
+                )
+                self.wasserstein_critic_opt.zero_grad()
+                zp_critic_loss.backward(retain_graph=True)
+                self.wasserstein_critic_opt.step()
+            metrics["zp_critic_loss"] = zp_critic_loss.item()
+
+            zp_loss = self.compute_zp_critic_encoder_loss(
+                q_z.data,
+                packed_current_act.data,
+                q_next_z.data,
+            )
+            losses += self.aux_coef * zp_loss
+            metrics["zp_loss"] = zp_loss.item()
         elif self.aux == "bisim":
             bisim_loss = self.compute_bisim_vanilla_encoder_loss(
                 q_z.data,
@@ -786,6 +838,122 @@ class Agent(object):
         bisim_loss = torch.square(z_dist - bisimilarity).mean()
 
         return bisim_loss
+
+    def compute_zp_critic_critic_loss(
+        self,
+        batch_z: torch.Tensor,  # [B x D]
+        batch_act: torch.Tensor,  # [B]
+        batch_next_z: torch.Tensor,  # [B x D]
+        n_samples: int = 32,
+    ) -> torch.Tensor:
+        with torch.no_grad():
+            batch_act_onehot = F.one_hot(
+                batch_act.long(), self.act_dim
+            ).float()  # [B x A]
+
+        # Generate samples from model
+        pred_next_zs = self.model(batch_z, batch_act_onehot, n_samples)  # [B x D x S]
+
+        # Prepare inputs for critic
+        batch_size = batch_z.shape[0]
+
+        # Expand true next state to match samples
+        batch_next_z_expanded = batch_next_z.unsqueeze(-1).expand(
+            -1, -1, n_samples
+        )  # [B x D x S]
+
+        # Reshape all inputs to 2D for critic
+        pred_next_zs_flat = pred_next_zs.permute(0, 2, 1).reshape(
+            -1, pred_next_zs.shape[1]
+        )  # [B*S x D]
+        batch_z_expanded = batch_z.unsqueeze(-1).expand(
+            -1, -1, n_samples
+        )  # [B x D x S]
+        batch_z_flat = batch_z_expanded.permute(0, 2, 1).reshape(
+            -1, batch_z.shape[1]
+        )  # [B*S x D]
+        batch_act_expanded = batch_act_onehot.unsqueeze(-1).expand(
+            -1, -1, n_samples
+        )  # [B x A x S]
+        batch_act_flat = batch_act_expanded.permute(0, 2, 1).reshape(
+            -1, batch_act_onehot.shape[1]
+        )  # [B*S x A]
+        batch_next_z_flat = batch_next_z_expanded.permute(0, 2, 1).reshape(
+            -1, batch_next_z.shape[1]
+        )  # [B*S x D]
+
+        # Get critic values
+        critique_pred = self.wasserstein_critic(
+            pred_next_zs_flat,  # [B*S x D]
+            batch_z_flat,  # [B*S x D]
+            batch_act_flat,  # [B*S x A]
+        )  # [B*S x 1]
+
+        critique_true = self.wasserstein_critic(
+            batch_next_z_flat,  # [B*S x D]
+            batch_z_flat,  # [B*S x D]
+            batch_act_flat,  # [B*S x A]
+        )  # [B*S x 1]
+
+        return -torch.mean(critique_pred - critique_true)  # signed!
+
+    def compute_zp_critic_encoder_loss(
+        self,
+        batch_z: torch.Tensor,  # [B x D]
+        batch_act: torch.Tensor,  # [B]
+        batch_next_z: torch.Tensor,  # [B x D]
+        n_samples: int = 32,
+    ) -> torch.Tensor:
+        with torch.no_grad():
+            batch_act_onehot = F.one_hot(
+                batch_act.long(), self.act_dim
+            ).float()  # [B x A]
+
+        # Generate samples from model
+        pred_next_zs = self.model(batch_z, batch_act_onehot, n_samples)  # [B x D x S]
+
+        # Prepare inputs for critic
+        batch_size = batch_z.shape[0]
+
+        # Expand true next state to match samples
+        batch_next_z_expanded = batch_next_z.unsqueeze(-1).expand(
+            -1, -1, n_samples
+        )  # [B x D x S]
+
+        # Reshape all inputs to 2D for critic
+        pred_next_zs_flat = pred_next_zs.permute(0, 2, 1).reshape(
+            -1, pred_next_zs.shape[1]
+        )  # [B*S x D]
+        batch_z_expanded = batch_z.unsqueeze(-1).expand(
+            -1, -1, n_samples
+        )  # [B x D x S]
+        batch_z_flat = batch_z_expanded.permute(0, 2, 1).reshape(
+            -1, batch_z.shape[1]
+        )  # [B*S x D]
+        batch_act_expanded = batch_act_onehot.unsqueeze(-1).expand(
+            -1, -1, n_samples
+        )  # [B x A x S]
+        batch_act_flat = batch_act_expanded.permute(0, 2, 1).reshape(
+            -1, batch_act_onehot.shape[1]
+        )  # [B*S x A]
+        batch_next_z_flat = batch_next_z_expanded.permute(0, 2, 1).reshape(
+            -1, batch_next_z.shape[1]
+        )  # [B*S x D]
+
+        # Get critic values
+        critique_pred = self.wasserstein_critic(
+            pred_next_zs_flat,  # [B*S x D]
+            batch_z_flat,  # [B*S x D]
+            batch_act_flat,  # [B*S x A]
+        )  # [B*S x 1]
+
+        critique_true = self.wasserstein_critic(
+            batch_next_z_flat,  # [B*S x D]
+            batch_z_flat,  # [B*S x D]
+            batch_act_flat,  # [B*S x A]
+        )  # [B*S x 1]
+
+        return F.mse_loss(critique_pred, critique_true)
 
     @torch.compile
     def compute_bisim_vanilla_encoder_loss(

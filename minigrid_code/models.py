@@ -109,6 +109,7 @@ class DetLatentModel(nn.Module):
         obs = self.fc2_d(x_d)
         return obs
 
+
 class StoLatentModel(nn.Module):
     def __init__(self, latent_dim: int, num_actions: int, hidden_dim: int):
         super().__init__()
@@ -125,7 +126,7 @@ class StoLatentModel(nn.Module):
         self.std_min = 0.1
         self.std_max = 10.0
         self.apply(weights_init_)
-    
+
     def forward(self, z: torch.Tensor, a: torch.Tensor) -> td.Independent:
         catted = torch.cat([z, a], dim=-1)
         zp = self.encoder(catted)
@@ -135,7 +136,78 @@ class StoLatentModel(nn.Module):
         std = self.std_min + F.softplus(std - self.std_min)
         return td.independent.Independent(td.Normal(mean, std), 1)
 
-        
+
+class GenLatentModel(nn.Module):
+    """
+    Generative latent transition model.
+    Maps (z, a, noise) -> z' samples
+    Output shape: [batch_size x latent_dim x n_samples]
+    """
+
+    def __init__(
+        self, latent_dim: int, num_actions: int, hidden_dim: int, noise_dim: int
+    ):
+        super().__init__()
+
+        self.latent_dim = latent_dim
+        self.noise_dim = noise_dim
+
+        self.generator = nn.Sequential(
+            nn.Linear(latent_dim + num_actions + noise_dim, hidden_dim),
+            nn.ELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ELU(),
+            nn.Linear(hidden_dim, latent_dim),
+        )
+
+        self.apply(weights_init_)
+
+    def forward(
+        self, z: torch.Tensor, a: torch.Tensor, n_samples: int = 1
+    ) -> torch.Tensor:
+        """
+        Args:
+            z: Current latent state [batch_size x latent_dim]
+            a: Action [batch_size x action_dim]
+            n_samples: Number of samples to generate per (z,a) pair
+        Returns:
+            Samples of next latent state [batch_size x latent_dim x n_samples]
+        """
+        batch_size = z.shape[0]
+
+        # Expand inputs to include samples dimension
+        z = z.unsqueeze(-1).expand(-1, -1, n_samples)  # [B x D x S]
+        a = a.unsqueeze(-1).expand(-1, -1, n_samples)  # [B x A x S]
+
+        # Sample noise
+        noise = torch.randn(
+            batch_size, self.noise_dim, n_samples, device=z.device
+        )  # [B x N x S]
+
+        # Concatenate inputs
+        x = torch.cat([z, a, noise], dim=1)  # [B x (D+A+N) x S]
+
+        # Reshape to [B*S x (D+A+N)] for Linear layers
+        x = x.permute(0, 2, 1)  # [B x S x (D+A+N)]
+        x = x.reshape(-1, x.shape[-1])  # [B*S x (D+A+N)]
+
+        # Generate samples
+        z_next = self.generator(x)  # [B*S x D]
+
+        # Reshape back to [B x D x S]
+        z_next = z_next.reshape(batch_size, n_samples, -1)  # [B x S x D]
+        z_next = z_next.permute(0, 2, 1)  # [B x D x S]
+
+        return z_next
+
+    def sample(
+        self, z: torch.Tensor, a: torch.Tensor, n_samples: int = 1
+    ) -> torch.Tensor:
+        """Convenience method for generating samples"""
+        with torch.no_grad():
+            return self.forward(z, a, n_samples)
+
+
 class AISModel(nn.Module):
     """
     psi in AIS, P_theta in RL.

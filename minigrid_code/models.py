@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.distributions as td
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, PackedSequence
 from torch.nn.utils.parametrizations import spectral_norm
@@ -88,27 +89,53 @@ class SeqEncoder(nn.Module):
         return x_normed, hidden
 
 
-class LatentModel(nn.Module):
+class DetLatentModel(nn.Module):
     """
     psi in AIS, P_theta in RL.
     Deterministic latent transition models.
     E[o' | z, a] or E[z' | z, a], depends on num_obs
     """
 
-    def __init__(self, num_obs, num_actions, AIS_state_size):
-        super(LatentModel, self).__init__()
+    def __init__(self, num_obs: int, num_actions: int, AIS_state_size: int):
+        super(DetLatentModel, self).__init__()
         input_ndims = AIS_state_size + num_actions
         self.fc1_d = nn.Linear(input_ndims, AIS_state_size // 2)
         self.fc2_d = nn.Linear(AIS_state_size // 2, num_obs)
 
         self.apply(weights_init_)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_d = F.elu(self.fc1_d(x))
         obs = self.fc2_d(x_d)
         return obs
 
+class StoLatentModel(nn.Module):
+    def __init__(self, latent_dim: int, num_actions: int, hidden_dim: int):
+        super().__init__()
 
+        self.latent_dim = latent_dim
+        self.encoder = nn.Sequential(
+            nn.Linear(latent_dim + num_actions, hidden_dim),
+            nn.ELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ELU(),
+            nn.Linear(hidden_dim, 2 * latent_dim),
+        )
+
+        self.std_min = 0.1
+        self.std_max = 10.0
+        self.apply(weights_init_)
+    
+    def forward(self, z: torch.Tensor, a: torch.Tensor) -> td.Independent:
+        catted = torch.cat([z, a], dim=-1)
+        zp = self.encoder(catted)
+        mean, std = zp.chunk(2, dim=-1)
+        mean = 30.0 * torch.tanh(mean / 30.0)
+        std = self.std_max - F.softplus(self.std_max - std)
+        std = self.std_min + F.softplus(std - self.std_min)
+        return td.independent.Independent(td.Normal(mean, std), 1)
+
+        
 class AISModel(nn.Module):
     """
     psi in AIS, P_theta in RL.

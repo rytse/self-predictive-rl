@@ -35,32 +35,22 @@ class Agent(object):
             "OP",
             "AIS",
             "AIS-P2",
+            "bisim",
             "bisim_critic",
-            "ZP_critic",
         ]
         self.AIS_state_size = args["AIS_state_size"]
 
-        if "critic" in self.aux:
+        if self.aux in ["bisim", "bisim_critic"]:
             self.bisim_gamma = args["bisim_gamma"]
             self.bisim_critic_train_steps = args["bisim_critic_train_steps"]
 
-            if self.aux == "ZP_critic":
-                self.wasserstein_critic = torch.compile(
-                    WassersteinCritic(
-                        self.AIS_state_size, self.act_dim, self.AIS_state_size // 2
-                    ),
-                    mode="default",
-                ).to(self.device)
-            elif self.aux == "bisim_critic":
-                self.wasserstein_critic = torch.compile(
-                    BisimWassersteinCritic(
-                        self.AIS_state_size, self.act_dim, self.AIS_state_size // 2
-                    ),
-                    mode="default",
-                ).to(self.device)
-            else:
-                raise ValueError(self.aux)
-
+        if self.aux == "bisim_critic":
+            self.wasserstein_critic = torch.compile(
+                BisimWassersteinCritic(
+                    self.AIS_state_size, self.act_dim, self.AIS_state_size // 2
+                ),
+                mode="default",
+            ).to(self.device)
             self.wasserstein_critic_opt = RMSprop(
                 self.wasserstein_critic.parameters(), lr=args["bisim_lr"]
             )
@@ -114,7 +104,7 @@ class Agent(object):
             self.model = None
         elif self.aux in ["ZP", "OP"]:
             self.model = torch.compile(
-                LatentModel(
+                DetLatentModel(
                     self.obs_dim if self.aux == "OP" else self.AIS_state_size,
                     self.act_dim,
                     self.AIS_state_size,
@@ -125,20 +115,19 @@ class Agent(object):
                 self.model.parameters(),
                 lr=args["aux_lr"],
             )
-        elif self.aux == "ZP_critic":
-            model_dim = self.AIS_state_size
+        elif self.aux == "bisim_critic":
+            self.model = None
+        elif self.aux == "bisim":
             self.model = torch.compile(
-                WassersteinModel(model_dim, self.act_dim, model_dim // 2).to(
-                    self.device
-                ),
+                StoLatentModel(
+                    self.AIS_state_size, self.act_dim, self.AIS_state_size
+                ).to(self.device),
                 mode="default",
             )
             self.AIS_optim = Adam(
                 self.model.parameters(),
                 lr=args["aux_lr"],
             )
-        elif self.aux == "bisim_critic":
-            self.model = None
         else:
             raise ValueError(self.aux)
 
@@ -349,7 +338,7 @@ class Agent(object):
                 enforce_sorted=False,
             )  # o'
 
-        if self.aux in ["AIS", "AIS-P2", "bisim_critic"]:  # prepare reward targets
+        if self.aux in ["AIS", "AIS-P2", "bisim", "bisim_critic"]:  # prepare reward targets
             next_rew = (
                 torch.from_numpy(batch_model_target_reward)
                 .to(self.device)
@@ -374,7 +363,6 @@ class Agent(object):
         if self.aux in [
             "AIS-P2",
             "ZP",
-            "ZP_critic",
             "bisim_critic",
         ]:  # prepare next_z targets
             q_next_z = pack_padded_sequence(
@@ -437,30 +425,9 @@ class Agent(object):
                 batch_next_z_target=q_next_z_target.data,
                 batch_final_flag=packed_final.data,
             )
-        elif self.aux == "ZP_critic":
-            for _ in range(self.bisim_critic_train_steps):
-                zp_critic_loss = self.compute_ZP_critic_critic_loss(
-                    q_z.data,
-                    packed_current_act.data,
-                    q_next_z.data,
-                    q_next_z_target.data,
-                ).mean()
-                self.wasserstein_critic_opt.zero_grad()
-                zp_critic_loss.backward(retain_graph=True)
-                self.wasserstein_critic_opt.step()
-            metrics["zp_critic_loss"] = zp_critic_loss.item()
-
-            zp_enc_loss = self.compute_ZP_critic_encoder_loss(
-                q_z.data,
-                packed_current_act.data,
-                q_next_z.data,
-                q_next_z_target.data,
-            ).mean()
-            losses += self.aux_coef * zp_enc_loss
-            metrics["zp_loss"] = zp_enc_loss.item()
         elif self.aux == "bisim_critic":
             for _ in range(self.bisim_critic_train_steps):
-                bisim_critic_loss = self.compute_bisim_critic_loss(
+                bisim_critic_loss = self.compute_bisim_critic_critic_loss(
                     q_z.data,
                     packed_current_act.data,
                     q_next_z.data,
@@ -471,10 +438,19 @@ class Agent(object):
                 self.wasserstein_critic_opt.step()
             metrics["bisim_critic_loss"] = bisim_critic_loss.item()
 
-            bisim_loss = self.compute_bisim_encoder_loss(
+            bisim_loss = self.compute_bisim_critic_encoder_loss(
                 q_z.data,
                 packed_current_act.data,
                 q_next_z.data,
+                next_rew_packed.data,
+                batch_size,
+            )
+            losses += self.aux_coef * bisim_loss
+            metrics["bisim_loss"] = bisim_loss.item()
+        elif self.aux == "bisim":
+            bisim_loss = self.compute_bisim_vanilla_encoder_loss(
+                q_z.data,
+                packed_current_act.data,
                 next_rew_packed.data,
                 batch_size,
             )
@@ -554,13 +530,13 @@ class Agent(object):
         losses += qf_loss
 
         self.optim.zero_grad()
-        if self.aux in ["ZP", "OP"]:
+        if self.aux in ["ZP", "OP", "bisim"]:
             self.AIS_optim.zero_grad()
 
         losses.backward()
 
         self.optim.step()
-        if self.aux in ["ZP", "OP"]:
+        if self.aux in ["ZP", "OP", "bisim"]:
             self.AIS_optim.step()
 
         return metrics
@@ -774,7 +750,7 @@ class Agent(object):
         return -torch.mean(critique_i - critique_j)  # signed!
 
     @torch.compile
-    def compute_bisim_encoder_loss(
+    def compute_bisim_critic_encoder_loss(
         self,
         batch_z: torch.Tensor,
         batch_act: torch.Tensor,
@@ -805,6 +781,43 @@ class Agent(object):
             batch_act_onehot[idxs_j],
         )
         transition_dist = torch.abs(critique_i - critique_j).view(-1, 1)
+
+        bisimilarity = r_dist + self.bisim_gamma * transition_dist
+        bisim_loss = torch.square(z_dist - bisimilarity).mean()
+
+        return bisim_loss
+
+    @torch.compile
+    def compute_bisim_vanilla_encoder_loss(
+        self,
+        batch_z: torch.Tensor,
+        batch_act: torch.Tensor,
+        batch_reward: torch.Tensor,
+        batch_size: int,
+    ):
+        with torch.no_grad():
+            batch_act_onehot = F.one_hot(batch_act.long(), self.act_dim).float()
+            idxs_i = torch.randperm(batch_size)
+            idxs_j = torch.arange(0, batch_size)
+            r_dist = torch.abs(batch_reward[idxs_i] - batch_reward[idxs_j]).view(-1, 1)
+
+        z_dist = torch.norm(batch_z[idxs_i] - batch_z[idxs_j], dim=1).view(-1, 1)
+
+        if self.aux_optim in ["ema", "detach"]:
+            with torch.no_grad():
+                z_next_dist = self.model(batch_z, batch_act_onehot)
+        elif self.aux_optim == "online":
+            z_next_dist = self.model(batch_z, batch_act_onehot)
+        else:
+            raise ValueError(self.aux_optim)
+
+        transition_dist = (
+            torch.sqrt(
+                (z_next_dist.mean[idxs_i] - z_next_dist.mean[idxs_j]).pow(2)
+                + (z_next_dist.stddev[idxs_i] - z_next_dist.stddev[idxs_j]).pow(2)
+            )
+            / 2.0
+        )
 
         bisimilarity = r_dist + self.bisim_gamma * transition_dist
         bisim_loss = torch.square(z_dist - bisimilarity).mean()

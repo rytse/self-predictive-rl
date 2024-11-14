@@ -16,7 +16,7 @@ import logger
 from r2d2replaybuffer import r2d2_ReplayMemory
 from models import (
     AISModel,
-    LatentModel,
+    DetLatentModel,
     pack_padded_sequence,
     soft_update,
     hard_update,
@@ -450,7 +450,7 @@ class End2End(R2D2, ABC):
     """
 
     def __init__(self, env, args):
-        self.model_type = LatentModel
+        self.model_type = DetLatentModel
         super().__init__(env, args)
 
     def setup_optimizers(self):

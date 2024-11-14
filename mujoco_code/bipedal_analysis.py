@@ -10,11 +10,17 @@ BISIM_ONLY = False
 
 # Data loading remains the same
 if INCLUDE_OLD:
-    bipedal_new_cfg_files = glob.glob("./logs/BipedalWalker-v3/**/flags.yml", recursive=True)
-    bipedal_old_cfg_files = glob.glob("./old_logs/BipedalWalker-v3/**/flags.yml", recursive=True)
+    bipedal_new_cfg_files = glob.glob(
+        "./logs/BipedalWalker-v3/**/flags.yml", recursive=True
+    )
+    bipedal_old_cfg_files = glob.glob(
+        "./old_logs/BipedalWalker-v3/**/flags.yml", recursive=True
+    )
     bipedal_cfg_files = bipedal_new_cfg_files + bipedal_old_cfg_files
 else:
-    bipedal_cfg_files = glob.glob("./logs/BipedalWalker-v3/**/flags.yml", recursive=True)
+    bipedal_cfg_files = glob.glob(
+        "./logs/BipedalWalker-v3/**/flags.yml", recursive=True
+    )
 
 print(f"{len(bipedal_cfg_files)=}")
 
@@ -45,7 +51,7 @@ for cfg_file, data in bipedal_data.items():
     idxs = ~df["return"].isna()
     env_steps = df["env_steps"][idxs]
     returns = df["return"][idxs]
-    
+
     # Create a trace for each dataset
     fig.add_trace(
         go.Scatter(
@@ -53,10 +59,10 @@ for cfg_file, data in bipedal_data.items():
             y=returns,
             name=cfg_file.split("/")[-2],  # This will appear in hover text
             hovertemplate=(
-                f"Path: {cfg_file}<br>" +
-                "Environment Steps: %{x}<br>" +
-                "Return: %{y}<br>" +
-                "<extra></extra>"  # This removes the trace name from the hover box
+                f"Path: {cfg_file}<br>"
+                + "Environment Steps: %{x}<br>"
+                + "Return: %{y}<br>"
+                + "<extra></extra>"  # This removes the trace name from the hover box
             ),
             line=dict(width=2),
             opacity=1,
@@ -71,14 +77,14 @@ fig.update_layout(
     width=1200,
     height=800,
     showlegend=False,  # Hide the legend as requested
-    hovermode='closest',  # Show hover info for the closest point
-    plot_bgcolor='white',  # White background
-    paper_bgcolor='white',
+    hovermode="closest",  # Show hover info for the closest point
+    plot_bgcolor="white",  # White background
+    paper_bgcolor="white",
 )
 
 # Add grid lines
-fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
-fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="LightGray")
+fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="LightGray")
 
 # Add click-to-hide functionality through custom JavaScript
 fig.update_traces(

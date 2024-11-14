@@ -22,14 +22,14 @@ seq_len: 1
 algo: ours # {null, td3, alm-3, alm-1, alm-no-model, alm-no-model-ours}
 aux: bisim_critic # {rkl, l2, none}
 aux_optim: detach # {ema, detach, online, none}
-aux_coef: "v-1.0"
+aux_coef: "v-2.0"
 disable_svg: true
 disable_reward: true
 freeze_critic: true
 online_encoder_actorcritic: true
 
 # Defaults for Wasserstein critic algos
-wass_gamma: 1.0
+wass_gamma: 0.5
 wass_critic_train_steps: 1
 wass_deterministic: true
 wass_norm_reward: true

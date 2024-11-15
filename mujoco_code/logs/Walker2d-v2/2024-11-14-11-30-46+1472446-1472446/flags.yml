@@ -1,41 +1,30 @@
-#common
-agent: 'alm'
-device: 'cuda'
+agent: alm
+device: cuda
 seed: 1
-
-#benchmark
-benchmark: 'gym'
-id: 'Humanoid-v2' # ("HalfCheetah-v2", "Humanoid-v2", "Ant-v2", "Walker2d-v2", "Hopper-v2")
+benchmark: gym
+id: Walker2d-v2
 distraction: 0
-distraction_type: "gaussian"
+distraction_type: gaussian
 scale: 0.1
-
-#data 
 num_train_steps: 500000
 explore_steps: 5000
 max_episode_steps: 1000
-env_buffer_size: 100000 # humanoid-v2 will be automatically changed to 1e6
+env_buffer_size: 100000
 batch_size: 1024
 seq_len: 1
-
-#key hparams
-algo: ours # {null, td3, alm-3, alm-1, alm-no-model, alm-no-model-ours}
-aux: bisim_critic # {rkl, l2, none}
-aux_optim: detach # {ema, detach, online, none}
-aux_coef: "v-2.0"
+algo: ours
+aux: bisim
+aux_optim: detach
+aux_coef: v-2.0
 disable_svg: true
 disable_reward: true
 freeze_critic: true
 online_encoder_actorcritic: true
-
-# Defaults for Wasserstein critic algos
 wass_gamma: 1.0
 wass_critic_train_steps: 1
 wass_deterministic: true
 wass_norm_reward: true
 wass_norm_action: true
-
-#learning 
 gamma: 0.99
 tau: 0.005
 target_update_interval: 1
@@ -48,37 +37,20 @@ lr:
   actor: 0.0001
   bisim_critic: 0.0004
 max_grad_norm: 100.0
-
-#exploration
 expl_start: 1.0
 expl_end: 0.1
 expl_duration: 100000
 stddev_clip: 0.3
-
-#hidden_dims and layers
 latent_dims: 50
 hidden_dims: 512
 model_hidden_dims: 1024
-
-#bias evaluation
-eval_bias: False 
+eval_bias: false
 eval_bias_interval: 500
-
-#evaluation
 eval_episode_interval: 5000
 num_eval_episodes: 10
-
-#logging
 verbose: 1
 debug: false
-save_dir: "logs"
+save_dir: logs
 log_interval: 500
-
-#saving
-save_snapshot: False
+save_snapshot: false
 save_snapshot_interval: 50000
-
-hydra:  
-  output_subdir: null  
-  run:  
-    dir: .

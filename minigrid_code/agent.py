@@ -772,7 +772,7 @@ class Agent(object):
         return F.mse_loss(critic_pred, critic_seen)
 
     @torch.compile
-    def compute_bisim_critic_loss(
+    def compute_bisim_critic_critic_loss(
         self,
         batch_z: torch.Tensor,
         batch_act: torch.Tensor,
@@ -839,6 +839,7 @@ class Agent(object):
 
         return bisim_loss
 
+    @torch.compile
     def compute_zp_critic_critic_loss(
         self,
         batch_z: torch.Tensor,  # [B x D]
@@ -897,6 +898,7 @@ class Agent(object):
 
         return -torch.mean(critique_pred - critique_true)  # signed!
 
+    @torch.compile
     def compute_zp_critic_encoder_loss(
         self,
         batch_z: torch.Tensor,  # [B x D]

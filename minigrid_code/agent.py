@@ -42,8 +42,8 @@ class Agent(object):
         self.AIS_state_size = args["AIS_state_size"]
 
         if self.aux in ["zp_critic", "bisim_critic"]:  # TODO "wass_gamma," etc
-            self.bisim_gamma = args["bisim_gamma"]
-            self.bisim_critic_train_steps = args["bisim_critic_train_steps"]
+            self.wass_gamma = args["wass_gamma"]
+            self.was_critic_train_steps = args["wass_critic_train_steps"]
 
         if self.aux == "bisim_critic":
             self.wasserstein_critic = torch.compile(
@@ -54,7 +54,7 @@ class Agent(object):
             ).to(self.device)
             self.wasserstein_critic_opt = RMSprop(
                 self.wasserstein_critic.parameters(),
-                lr=args["bisim_lr"],  # TODO "wass_lr"
+                lr=args["wass_lr"],
             )
         elif self.aux == "zp_critic":
             self.wasserstein_critic = torch.compile(
@@ -65,7 +65,7 @@ class Agent(object):
             ).to(self.device)
             self.wasserstein_critic_opt = RMSprop(
                 self.wasserstein_critic.parameters(),
-                lr=args["bisim_lr"],  # TODO "wass_lr"
+                lr=args["wass_lr"],
             )
 
         self.encoder = SeqEncoder(self.obs_dim, self.act_dim, self.AIS_state_size).to(
@@ -459,7 +459,7 @@ class Agent(object):
                 batch_final_flag=packed_final.data,
             )
         elif self.aux == "bisim_critic":
-            for _ in range(self.bisim_critic_train_steps):
+            for _ in range(self.was_critic_train_steps):
                 bisim_critic_loss = self.compute_bisim_critic_critic_loss(
                     q_z.data,
                     packed_current_act.data,
@@ -481,7 +481,7 @@ class Agent(object):
             losses += self.aux_coef * bisim_loss
             metrics["bisim_loss"] = bisim_loss.item()
         elif self.aux == "zp_critic":
-            for _ in range(self.bisim_critic_train_steps):
+            for _ in range(self.was_critic_train_steps):
                 zp_critic_loss = self.compute_zp_critic_critic_loss(
                     q_z.data,
                     packed_current_act.data,
@@ -834,7 +834,7 @@ class Agent(object):
         )
         transition_dist = torch.abs(critique_i - critique_j).view(-1, 1)
 
-        bisimilarity = r_dist + self.bisim_gamma * transition_dist
+        bisimilarity = r_dist + self.wass_gamma * transition_dist
         bisim_loss = torch.square(z_dist - bisimilarity).mean()
 
         return bisim_loss
@@ -989,7 +989,7 @@ class Agent(object):
             / 2.0
         )
 
-        bisimilarity = r_dist + self.bisim_gamma * transition_dist
+        bisimilarity = r_dist + self.wass_gamma * transition_dist
         bisim_loss = torch.square(z_dist - bisimilarity).mean()
 
         return bisim_loss

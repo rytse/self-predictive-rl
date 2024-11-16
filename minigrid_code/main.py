@@ -61,10 +61,10 @@ def main():
     parser.add_argument("--EPS_decay_type", type=str, default="exponential")
     parser.add_argument("--test_epsilon", type=float, default=0.0)
 
-    ## Bisim
-    parser.add_argument("--bisim_gamma", type=float, default=1.0)
-    parser.add_argument("--bisim_lr", type=float, default=1e-3)
-    parser.add_argument("--bisim_critic_train_steps", type=int, default=1)
+    ## Wass
+    parser.add_argument("--wass_gamma", type=float, default=1.0)
+    parser.add_argument("--wass_lr", type=float, default=1e-3)
+    parser.add_argument("--wass_critic_train_steps", type=int, default=1)
 
     args = parser.parse_args()
 

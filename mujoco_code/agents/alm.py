@@ -79,6 +79,7 @@ class AlmAgent(object):
             "op-kl",
             "bisim",
             "bisim_critic",
+            "zp_critic",
             None,
         ]
         assert self.aux_optim in ["ema", "detach", "online", None]
@@ -124,7 +125,7 @@ class AlmAgent(object):
 
         if self.aux == "bisim":
             EncoderClass, ModelClass = StoEncoder, StoModel
-        elif self.aux == "bisim_critic":
+        elif self.aux in ["bisim_critic", "zp_critic"]:
             if self.wass_deterministic:
                 EncoderClass, ModelClass = DetEncoder, DetModel
             else:
@@ -168,17 +169,13 @@ class AlmAgent(object):
                 BisimWassCritic(latent_dims, num_actions, hidden_dims).to(self.device),
                 mode="default",
             )
-        # elif self.aux == "zp_critic":
-        #     self.wass_critic = torch.compile(
-        #         ZPWassersteinCritic(latent_dims, num_actions, hidden_dims).to(self.device),
-        #         mode="default",
-        #     )
-        # elif self.aux == "op_critic":
-        #     self.wass_critic = torch.compile(
-        #         ZPWassersteinCritic(num_states, num_actions, hidden_dims).to(self.device),
-        #         mode="default",
-        #     )
-
+        elif self.aux == "zp_critic":
+            self.wass_critic = torch.compile(
+                ZPWassersteinCritic(latent_dims, num_actions, hidden_dims).to(
+                    self.device
+                ),
+                mode="default",
+            )
         self.actor = torch.compile(
             Actor(
                 latent_dims, hidden_dims, num_actions, self.action_low, self.action_high
@@ -367,10 +364,17 @@ class AlmAgent(object):
 
         wass_critic_loss = None
 
-        if self.aux in ["bisim_critic", "zp_critic", "op_critic"]:
+        if self.aux == "bisim_critic":
+            wass_critic_loss_fn = self.bisim_wass_critic_loss
+        elif self.aux == "zp_critic":
+            wass_critic_loss_fn = self.zp_wass_critic_loss
+        else:
+            wass_critic_loss_fn = None
+
+        if wass_critic_loss_fn:
             for _ in range(self.was_critic_train_steps):
                 self.wass_critic_opt.zero_grad()
-                wass_critic_loss = self.bisim_wass_critic_loss(
+                wass_critic_loss = wass_critic_loss_fn(
                     state_seq, action_seq, next_state_seq
                 )
                 wass_critic_loss.backward()
@@ -539,7 +543,7 @@ class AlmAgent(object):
         return bisim_critic_loss
 
     @torch.compile
-    def bisim_encoder_loss(
+    def bisim_wass_encoder_loss(
         self,
         z_batch: torch.Tensor,
         next_state_batch: torch.Tensor,
@@ -594,6 +598,60 @@ class AlmAgent(object):
 
         return bisim_loss, z_dist, r_dist, transition_dist
 
+    @torch.compile
+    def zp_wass_critic_loss(
+        self,
+        state_seq: torch.Tensor,
+        action_seq: torch.Tensor,
+        next_state_seq: torch.Tensor,
+    ) -> torch.Tensor:
+        with torch.no_grad():
+            z_dist = self.encoder(state_seq[0])
+            z_batch = z_dist.rsample()  # z (B, Z)
+            action_batch = action_seq[0]
+            next_state_batch = next_state_seq[0]
+            z_next_dist = self._get_z_next_dist(next_state_batch)
+            norm_action_batch = self.action_normalizer(action_batch)
+        z_next_prior_dist = self.model(z_batch, action_batch)  # p_z(z' | z, a)
+
+        critique_pred = self.wass_critic(
+            z_next_prior_dist.mean,
+            z_batch,
+            norm_action_batch,
+        )
+        critique_true = self.wass_critic(
+            z_next_dist.mean,
+            z_batch,
+            norm_action_batch,
+        )
+
+        return -torch.mean(critique_pred - critique_true)
+
+    # @torch.compile
+    def zp_wass_encoder_loss(
+        self,
+        z_batch: torch.Tensor,
+        next_state_batch: torch.Tensor,
+        action_batch: torch.Tensor,
+    ) -> torch.Tensor:
+        with torch.no_grad():
+            z_next_dist = self._get_z_next_dist(next_state_batch)
+            norm_action_batch = self.action_normalizer(action_batch)
+        z_next_prior_dist = self.model(z_batch, action_batch)  # p_z(z' | z, a)
+
+        critique_pred = self.wass_critic(
+            z_next_prior_dist.mean,
+            z_batch,
+            norm_action_batch,
+        )
+        critique_true = self.wass_critic(
+            z_next_dist.mean,
+            z_batch,
+            norm_action_batch,
+        )
+
+        return F.mse_loss(critique_pred, critique_true), z_next_prior_dist.sample()
+
     def _aux_loss(
         self,
         z_batch: torch.Tensor,
@@ -627,7 +685,7 @@ class AlmAgent(object):
                 z_dist,
                 r_dist,
                 transition_dist,
-            ) = self.bisim_encoder_loss(
+            ) = self.bisim_wass_encoder_loss(
                 z_batch,
                 next_state_batch,
                 action_batch,
@@ -637,7 +695,10 @@ class AlmAgent(object):
                 metrics["z_dist"] = z_dist.mean().item()
                 metrics["r_dist"] = r_dist.mean().item()
                 metrics["transition_dist"] = transition_dist.mean().item()
-
+        elif self.aux == "zp_critic":
+            distance, z_next_prior_sample = self.zp_wass_encoder_loss(
+                z_batch, next_state_batch, action_batch
+            )
         else:  # TODO simplify this. for now we do this to torch.compile(bisim_encoder_loss) nicely
             z_next_prior_dist = self.model(z_batch, action_batch)  # p_z(z' | z, a)
             z_next_dist = self._get_z_next_dist(next_state_batch)  # p(z' | s')
@@ -1021,5 +1082,7 @@ def lambda_returns(
         last = inp + disc * lambda_ * last
         returns.append(last)
 
+    returns = torch.stack(list(reversed(returns)), dim=0)
+    return returns
     returns = torch.stack(list(reversed(returns)), dim=0)
     return returns

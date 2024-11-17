@@ -41,8 +41,9 @@ class Agent(object):
         ]
         self.AIS_state_size = args["AIS_state_size"]
 
-        if self.aux in ["zp_critic", "bisim_critic"]:  # TODO "wass_gamma," etc
-            self.wass_gamma = args["wass_gamma"]
+        if self.aux in ["bisim", "bisim_critic"]:
+            self.bisim_gamma = args["bisim_gamma"]
+        if self.aux in ["bisim_critic", "zp_critic"]:
             self.was_critic_train_steps = args["wass_critic_train_steps"]
 
         if self.aux == "bisim_critic":
@@ -834,7 +835,7 @@ class Agent(object):
         )
         transition_dist = torch.abs(critique_i - critique_j).view(-1, 1)
 
-        bisimilarity = r_dist + self.wass_gamma * transition_dist
+        bisimilarity = r_dist + self.bisim_gamma * transition_dist
         bisim_loss = torch.square(z_dist - bisimilarity).mean()
 
         return bisim_loss
@@ -989,7 +990,7 @@ class Agent(object):
             / 2.0
         )
 
-        bisimilarity = r_dist + self.wass_gamma * transition_dist
+        bisimilarity = r_dist + self.bisim_gamma * transition_dist
         bisim_loss = torch.square(z_dist - bisimilarity).mean()
 
         return bisim_loss

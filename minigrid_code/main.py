@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--test_epsilon", type=float, default=0.0)
 
     ## Wass
-    parser.add_argument("--wass_gamma", type=float, default=1.0)
+    parser.add_argument("--bisim_gamma", type=float, default=1.0)
     parser.add_argument("--wass_lr", type=float, default=1e-3)
     parser.add_argument("--wass_critic_train_steps", type=int, default=1)
 

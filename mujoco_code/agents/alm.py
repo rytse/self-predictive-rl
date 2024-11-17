@@ -58,9 +58,9 @@ class AlmAgent(object):
 
         # Wasserstein critic
         assert (
-            cfg.wass_gamma >= 0.0 and cfg.wass_gamma <= 1.0
-        ), f"wass_gamma should be in [0, 1], got {cfg.wass_gamma}"
-        self.wass_gamma = cfg.wass_gamma
+            cfg.bisim_gamma >= 0.0 and cfg.bisim_gamma <= 1.0
+        ), f"bisim_gamma should be in [0, 1], got {cfg.bisim_gamma}"
+        self.bisim_gamma = cfg.bisim_gamma
         self.was_critic_train_steps = cfg.wass_critic_train_steps
         self.wass_deterministic = cfg.wass_deterministic
 
@@ -592,8 +592,8 @@ class AlmAgent(object):
             )
 
         bisimilarity = (
-            1.0 - self.wass_gamma
-        ) * r_dist + self.wass_gamma * transition_dist
+            1.0 - self.bisim_gamma
+        ) * r_dist + self.bisim_gamma * transition_dist
         bisim_loss = torch.square(z_dist - bisimilarity)
 
         return bisim_loss, z_dist, r_dist, transition_dist

@@ -29,7 +29,7 @@ freeze_critic: true
 online_encoder_actorcritic: true
 
 # Defaults for Wasserstein critic algos
-wass_gamma: 1.0
+bisim_gamma: 1.0
 wass_critic_train_steps: 1
 wass_deterministic: true
 wass_norm_reward: true

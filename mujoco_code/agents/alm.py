@@ -627,7 +627,7 @@ class AlmAgent(object):
 
         return -torch.mean(critique_pred - critique_true)
 
-    # @torch.compile
+    @torch.compile
     def zp_wass_encoder_loss(
         self,
         z_batch: torch.Tensor,

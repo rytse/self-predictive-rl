@@ -4,5 +4,7 @@ MiniGrid-Unlock-v0
 MiniGrid-DoorKey-8x8-v0
 MiniGrid-KeyCorridorS3R2-v0
 MiniGrid-MultiRoom-N2-S4-v0
+MiniGrid-Dynamic-Obstacles-6x6-v0
 MiniGrid-Dynamic-Obstacles-Random-6x6-v0
 MiniGrid-Dynamic-Obstacles-16x16-v0
+

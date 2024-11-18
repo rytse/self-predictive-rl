@@ -43,7 +43,7 @@ class Agent(object):
 
         if self.aux in ["bisim", "bisim_critic"]:
             assert (
-                args["bisim_gama"] >= 0.0 and args["bisim_gama"] <= 1.0
+                args["bisim_gamma"] >= 0.0 and args["bisim_gamma"] <= 1.0
             ), f"bisim_gamma should be in [0,1], but got {args['bisim_gamma']}"
             self.bisim_gamma = args["bisim_gamma"]
         if self.aux in ["bisim_critic", "zp_critic"]:

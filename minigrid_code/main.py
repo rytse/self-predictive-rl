@@ -44,7 +44,7 @@ def main():
     # Representation learning
     parser.add_argument("--aux", type=str, default="None")
     parser.add_argument("--aux_optim", type=str, default="detach")
-    parser.add_argument("--aux_coef", type=float, default=1.0)
+    parser.add_argument("--aux_coef", type=float, default=2.0)
     parser.add_argument("--aux_lr", type=float, default=1e-3)
     parser.add_argument("--AIS_state_size", type=int, default=128)
 

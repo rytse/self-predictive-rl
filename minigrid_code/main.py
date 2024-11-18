@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--debug", type=bool, default=False)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--env_name", type=str)
+    parser.add_argument("--save_dir", type=str, default="logs")
 
     # Training
     parser.add_argument("--cuda", type=bool, default=True)
@@ -76,7 +77,7 @@ def main():
     ### CREATE DIRECTORY FOR LOGGING
     ##################################
     format_strs = ["csv"]
-    save_dir = "logs"
+    save_dir = args.save_dir
     if args.debug:
         save_dir = "debug"
         format_strs.extend(["stdout", "log"])  # logger.log

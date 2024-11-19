@@ -10,8 +10,9 @@ import glob
 import yaml
 
 plt.rcParams.update({'font.size': 24})
-FIG_WIDTH = 8
-FIG_HEIGHT = 10
+FIG_WIDTH = 16
+FIG_HEIGHT = 20
+DPI = 300
 
 mujoco_auxs = ["l2", "rkl", "bisim", "bisim_critic", "zp_critic"]
 minigrid_auxs = ["ZP", "bisim", "bisim_critic", "zp_critic"]
@@ -93,10 +94,33 @@ for env_idx, env in enumerate(mujoco_envs):
     plt.title(env)
     plt.legend(legend_labels)
 plt.suptitle("Nominal Mujoco Results", fontsize=32)
-plt.savefig("./plots/nominal_mujoco.png", dpi=1000)
+plt.savefig("./plots/nominal_mujoco.png", dpi=DPI)
 
 # Nominal minigrid results
-# TODO
+nominal_minigrid_res = get_results(Path("minigrid_code/logs_nominal_minigrid"), "minigrid")
+assert len(nominal_minigrid_res) == len(minigrid_envs)
+plt.figure(figsize=(FIG_WIDTH * 3, FIG_HEIGHT * 3))
+for env_idx, env in enumerate(minigrid_envs):
+    plt.subplot(3, 3, env_idx + 1)
+    legend_labels = []
+    for aux in minigrid_auxs:
+        for exp_idx, (df, _cfg) in enumerate(nominal_minigrid_res[env][aux].values()):
+            valid_idxs = ~df["return"].isna()
+            env_steps = df["env_steps"][valid_idxs]
+            rewards = df["return"][valid_idxs]
+
+            plt.plot(env_steps, rewards, label=f"{aux} {exp_idx}")
+
+            if len(nominal_minigrid_res[env][aux]) == 1:
+                legend_labels.append(aux)
+            else:
+                legend_labels.append(f"{aux} {exp_idx}")
+    plt.xlabel("Env Steps")
+    plt.ylabel("Return")
+    plt.title(env)
+    plt.legend(legend_labels)
+plt.suptitle("Nominal Minigrid Results", fontsize=32)
+plt.savefig("./plots/nominal_minigrid.png", dpi=DPI)
 
 # bisim_gamma mujoco ablation
 bisim_gammas = [0.25, 0.50, 0.75, 1.0]  # baseline is 0.5
@@ -135,7 +159,7 @@ for aux_idx, aux in enumerate(["bisim", "bisim_critic"]):
     plt.title(f"{token_mujoco_env} {aux}")
     plt.legend(legend_labels)
 plt.suptitle("Bisim Gamma Ablation for Mujoco", fontsize=32)
-plt.savefig("./plots/bisim_gamma_mujoco_ablation.png", dpi=1000)
+plt.savefig("./plots/bisim_gamma_mujoco_ablation.png", dpi=DPI)
 
 # bisim_gamma minigrid ablation
 # TODO minigrid
@@ -177,7 +201,7 @@ for aux_idx, aux in enumerate(["bisim_critic", "zp_critic"]):
     plt.title(f"{token_mujoco_env} {aux}")
     plt.legend(legend_labels)
 plt.suptitle("Wass Critic Train Steps Ablation for Mujoco", fontsize=32)
-plt.savefig("./plots/wass_critic_train_steps_mujoco_ablation.png", dpi=1000)
+plt.savefig("./plots/wass_critic_train_steps_mujoco_ablation.png", dpi=DPI)
 
 # wass_critic_train_steps minigrid ablation
 # TODO minigrid
@@ -217,7 +241,7 @@ for aux_idx, aux in enumerate(mujoco_auxs):
     plt.legend()
 
 plt.suptitle("Distractors Ablation for Mujoco", fontsize=32)
-plt.savefig("./plots/distractors_mujoco.png", dpi=1000)
+plt.savefig("./plots/distractors_mujoco.png", dpi=DPI)
 
 # distractors minigrid
 # TODO minigrid

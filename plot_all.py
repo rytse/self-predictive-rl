@@ -192,7 +192,7 @@ for aux_idx, aux in enumerate(mujoco_auxs):
     plt.subplot(2, 2, aux_idx) # skipped l2, the first one
     legend_labels
 
-    for distractor in ["none", "gaussian"]: # , "interleaved_gaussian_mixture"]: # TODO
+    for distractor in ["none", "gaussian", "interleaved_gaussian_mixture"]:
         if distractor == "none":
             dfs = nominal_mujoco_res[token_mujoco_env][aux]
             assert len(dfs) == 1

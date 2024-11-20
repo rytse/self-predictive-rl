@@ -9,7 +9,7 @@ import glob
 
 import yaml
 
-plt.rcParams.update({'font.size': 24})
+plt.rcParams.update({"font.size": 24})
 FIG_WIDTH = 16
 FIG_HEIGHT = 20
 DPI = 300
@@ -18,6 +18,7 @@ mujoco_auxs = ["l2", "rkl", "bisim", "bisim_critic", "zp_critic"]
 minigrid_auxs = ["ZP", "bisim", "bisim_critic", "zp_critic"]
 
 token_mujoco_env = "HalfCheetah-v2"
+token_minigrid_env = "MiniGrid-LavaCrossingS9N3-v0"
 
 
 def get_envs(envs_file: Path) -> List[str]:
@@ -97,7 +98,9 @@ plt.suptitle("Nominal Mujoco Results", fontsize=32)
 plt.savefig("./plots/nominal_mujoco.png", dpi=DPI)
 
 # Nominal minigrid results
-nominal_minigrid_res = get_results(Path("minigrid_code/logs_nominal_minigrid"), "minigrid")
+nominal_minigrid_res = get_results(
+    Path("minigrid_code/logs_nominal_minigrid"), "minigrid"
+)
 assert len(nominal_minigrid_res) == len(minigrid_envs)
 plt.figure(figsize=(FIG_WIDTH * 3, FIG_HEIGHT * 3))
 for env_idx, env in enumerate(minigrid_envs):
@@ -122,9 +125,11 @@ for env_idx, env in enumerate(minigrid_envs):
 plt.suptitle("Nominal Minigrid Results", fontsize=32)
 plt.savefig("./plots/nominal_minigrid.png", dpi=DPI)
 
-# bisim_gamma mujoco ablation
+# bisim_gamma ablation
 bisim_gammas = [0.25, 0.50, 0.75, 1.0]  # baseline is 0.5
 baseline_bisim_gamma = 0.50
+
+# bisim_gamma mujoco ablation
 ablate_bisim_gamma_mujoco_res = get_results(
     Path("mujoco_code/logs_ablate/bisim_gamma"), "mujoco"
 )
@@ -162,11 +167,48 @@ plt.suptitle("Bisim Gamma Ablation for Mujoco", fontsize=32)
 plt.savefig("./plots/bisim_gamma_mujoco_ablation.png", dpi=DPI)
 
 # bisim_gamma minigrid ablation
-# TODO minigrid
+ablate_bisim_gamma_minigrid_res = get_results(
+    Path("minigrid_code/logs_ablate/bisim_gamma"), "minigrid"
+)
+plt.figure(figsize=(FIG_WIDTH * 2, FIG_HEIGHT))
+for aux_idx, aux in enumerate(["bisim", "bisim_critic"]):
+    plt.subplot(1, 2, aux_idx + 1)
+    legend_labels = []
 
-# wass_critic_train_steps mujoco ablation
+    for bisim_gamma in bisim_gammas:
+        if bisim_gamma == baseline_bisim_gamma:
+            dfs = nominal_minigrid_res[token_minigrid_env][aux]
+            assert len(dfs) == 1
+            df = list(dfs.values())[0][0]
+        else:
+            cand_dfs = ablate_bisim_gamma_minigrid_res[token_minigrid_env][aux]
+            dfs = []
+            for cand_df, cand_cfg in cand_dfs.values():
+                if cand_cfg["bisim_gamma"] == bisim_gamma:
+                    dfs.append(cand_df)
+            assert len(dfs) == 1
+            df = dfs[0]
+
+        valid_idxs = ~df["return"].isna()
+        env_steps = df["env_steps"][valid_idxs]
+        rewards = df["return"][valid_idxs]
+
+        plt.plot(env_steps, rewards, label=f"{aux} {bisim_gamma}")
+        legend_labels.append(f"bisim_gamma={bisim_gamma}")
+
+    plt.xlabel("Env Steps")
+    plt.ylabel("Return")
+    plt.title(f"{token_minigrid_env} {aux}")
+    plt.legend(legend_labels)
+plt.suptitle("Bisim Gamma Ablation for Minigrid", fontsize=32)
+plt.savefig("./plots/bisim_gamma_minigrid_ablation.png", dpi=DPI)
+
+
+# wass_critic_train_steps ablation
 wass_critic_train_steps_all = [1, 5, 10]
 baseline_wass_critic_train_steps = 1
+
+# wass_critic_train_steps mujoco ablation
 ablate_wass_critic_train_steps_mujoco_res = get_results(
     Path("mujoco_code/logs_ablate/wass_critic_train_steps"), "mujoco"
 )
@@ -204,16 +246,52 @@ plt.suptitle("Wass Critic Train Steps Ablation for Mujoco", fontsize=32)
 plt.savefig("./plots/wass_critic_train_steps_mujoco_ablation.png", dpi=DPI)
 
 # wass_critic_train_steps minigrid ablation
-# TODO minigrid
+ablate_wass_critic_train_steps_minigrid_res = get_results(
+    Path("minigrid_code/logs_ablate/wass_critic_train_steps"), "minigrid"
+)
+plt.figure(figsize=(FIG_WIDTH * 2, FIG_HEIGHT))
+for aux_idx, aux in enumerate(["bisim_critic", "zp_critic"]):
+    plt.subplot(1, 2, aux_idx + 1)
+    legend_labels = []
 
-# distractors mujoco 
+    for wass_critic_train_steps in wass_critic_train_steps_all:
+        if wass_critic_train_steps == baseline_wass_critic_train_steps:
+            dfs = nominal_minigrid_res[token_minigrid_env][aux]
+            assert len(dfs) == 1
+            df = list(dfs.values())[0][0]
+        else:
+            cand_dfs = ablate_wass_critic_train_steps_minigrid_res[token_minigrid_env][
+                aux
+            ]
+            dfs = []
+            for cand_df, cand_cfg in cand_dfs.values():
+                if cand_cfg["wass_critic_train_steps"] == wass_critic_train_steps:
+                    dfs.append(cand_df)
+            assert len(dfs) == 1
+            df = dfs[0]
+
+        valid_idxs = ~df["return"].isna()
+        env_steps = df["env_steps"][valid_idxs]
+        rewards = df["return"][valid_idxs]
+
+        plt.plot(env_steps, rewards, label=f"{aux} {wass_critic_train_steps}")
+        legend_labels.append(f"wass_critic_train_steps={wass_critic_train_steps}")
+
+    plt.xlabel("Env Steps")
+    plt.ylabel("Return")
+    plt.title(f"{token_minigrid_env} {aux}")
+    plt.legend(legend_labels)
+plt.suptitle("Wass Critic Train Steps Ablation for Minigrid", fontsize=32)
+plt.savefig("./plots/wass_critic_train_steps_minigrid_ablation.png", dpi=DPI)
+
+# distractors mujoco
 plt.figure(figsize=(FIG_WIDTH * 2, FIG_HEIGHT * 2))
 token_mujoco_distractor_env = token_mujoco_env + "-d32"
 for aux_idx, aux in enumerate(mujoco_auxs):
     if aux == "l2":
         continue
 
-    plt.subplot(2, 2, aux_idx) # skipped l2, the first one
+    plt.subplot(2, 2, aux_idx)  # skipped l2, the first one
     legend_labels
 
     for distractor in ["none", "gaussian", "interleaved_gaussian_mixture"]:
@@ -227,11 +305,11 @@ for aux_idx, aux in enumerate(mujoco_auxs):
             )[token_mujoco_distractor_env][aux]
             assert len(cand_dfs) == 1
             df = list(cand_dfs.values())[0][0]
-        
+
         valid_idxs = ~df["return"].isna()
         env_steps = df["env_steps"][valid_idxs]
         rewards = df["return"][valid_idxs]
-        
+
         plt.plot(env_steps, rewards, label=distractor)
         legend_labels.append(distractor)
 

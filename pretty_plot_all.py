@@ -33,8 +33,22 @@ FIG_WIDTH = 12
 FIG_HEIGHT = 8
 DPI = 300
 
-mujoco_auxs = ["l2", "rkl", "bisim", "bisim_critic", "zp_critic"]
-minigrid_auxs = ["ZP", "bisim", "bisim_critic", "zp_critic"]
+aux_pretty_names = {
+    "l2": "ZP-L2",
+    "rkl": "ZP-RKL",
+    "bisim": "DBC",
+    "bisim_critic": "DBC-WC",
+    "zp_critic": "ZP-WC",
+    "ZP": "ZP-L2",
+}
+distractor_pretty_names = {
+    "none": "None",
+    "gaussian": "Gaussian",
+    "interleaved_gaussian_mixture": "Interleaved Gaussian Mixture",
+}
+
+mujoco_auxs = ["l2", "rkl", "bisim", "zp_critic", "bisim_critic"]
+minigrid_auxs = ["ZP", "bisim", "zp_critic", "bisim_critic"]
 
 token_mujoco_env = "HalfCheetah-v2"
 token_minigrid_env = "MiniGrid-LavaCrossingS9N3-v0"
@@ -42,13 +56,14 @@ token_minigrid_env = "MiniGrid-LavaCrossingS9N3-v0"
 
 def style_plot(ax, title, xlabel="Env Steps", ylabel="Return"):
     """Helper function to consistently style plots"""
-    ax.set_title(title, pad=20, fontweight="bold")
-    ax.set_xlabel(xlabel, labelpad=10)
-    ax.set_ylabel(ylabel, labelpad=10)
+    ax.set_title(title, pad=20, fontweight="bold", fontsize=24)
+    ax.set_xlabel(xlabel, labelpad=10, fontsize=20)
+    ax.set_ylabel(ylabel, labelpad=10, fontsize=20)
     ax.grid(True, alpha=0.3)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", borderaxespad=0.0)
+    # ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", borderaxespad=0.0)
+    ax.legend(loc="best", fontsize=16)
     ax.grid(True, linestyle="--", alpha=0.3)
 
 
@@ -83,7 +98,8 @@ def plot_results(envs, results, auxs, plot_title, filename):
                 env_steps = df["env_steps"][valid_idxs]
                 rewards = df["return"][valid_idxs]
 
-                label = aux if len(results[env][aux]) == 1 else f"{aux} {exp_idx}"
+                pretty_aux = aux_pretty_names[aux]
+                label = pretty_aux if len(results[env][aux]) == 1 else f"{pretty_aux} {exp_idx}"
                 ax.plot(env_steps, rewards, label=label)
                 legend_labels.append(label)
 
@@ -92,7 +108,7 @@ def plot_results(envs, results, auxs, plot_title, filename):
     for idx in range(len(envs), len(axes)):
         axes[idx].set_visible(False)
 
-    plt.suptitle(plot_title, fontsize=20, y=1.02)
+    plt.suptitle(plot_title, fontsize=36, y=1.02)
     plt.tight_layout()
     plt.savefig(filename, dpi=DPI, bbox_inches="tight")
     plt.close()
@@ -106,6 +122,7 @@ def plot_ablation(
     param_values,
     baseline_value,
     param_name,
+    latex_param_name,
     plot_title,
     filename,
 ):
@@ -135,11 +152,11 @@ def plot_ablation(
             env_steps = df["env_steps"][valid_idxs]
             rewards = df["return"][valid_idxs]
 
-            ax.plot(env_steps, rewards, label=f"{param_name}={param_value}")
+            ax.plot(env_steps, rewards, label=f"${latex_param_name}={param_value}$")
 
-        style_plot(ax, f"{token_env} {aux}")
+        style_plot(ax, f"{token_env} {aux_pretty_names[aux]}")
 
-    plt.suptitle(plot_title, fontsize=20, y=1.02)
+    plt.suptitle(plot_title, fontsize=36, y=1.02)
     plt.tight_layout()
     plt.savefig(filename, dpi=DPI, bbox_inches="tight")
     plt.close()
@@ -236,6 +253,7 @@ plot_ablation(
     bisim_gammas,
     baseline_bisim_gamma,
     "bisim_gamma",
+    "\gamma_{\mathrm{bisim}}",
     "Bisim Gamma Ablation for Mujoco",
     "./plots/bisim_gamma_mujoco_ablation.png",
 )
@@ -252,6 +270,7 @@ plot_ablation(
     bisim_gammas,
     baseline_bisim_gamma,
     "bisim_gamma",
+    "\gamma_{\mathrm{bisim}}",
     "Bisim Gamma Ablation for Minigrid",
     "./plots/bisim_gamma_minigrid_ablation.png",
 )
@@ -272,6 +291,7 @@ plot_ablation(
     wass_critic_train_steps_all,
     baseline_wass_critic_train_steps,
     "wass_critic_train_steps",
+    "N_{\mathrm{critic}}",
     "Wass Critic Train Steps Ablation for Mujoco",
     "./plots/wass_critic_train_steps_mujoco_ablation.png",
 )
@@ -288,6 +308,7 @@ plot_ablation(
     wass_critic_train_steps_all,
     baseline_wass_critic_train_steps,
     "wass_critic_train_steps",
+    "N_{\mathrm{critic}}",
     "Wass Critic Train Steps Ablation for Minigrid",
     "./plots/wass_critic_train_steps_minigrid_ablation.png",
 )
@@ -324,11 +345,11 @@ for aux in mujoco_auxs:
         env_steps = df["env_steps"][valid_idxs]
         rewards = df["return"][valid_idxs]
 
-        ax.plot(env_steps, rewards, label=distractor)
+        ax.plot(env_steps, rewards, label=distractor_pretty_names[distractor])
 
-    style_plot(ax, f"{token_mujoco_env} {aux}")
+    style_plot(ax, f"{token_mujoco_env} {aux_pretty_names[aux]}")
 
-plt.suptitle("Distractors Ablation for Mujoco", fontsize=20, y=1.02)
+plt.suptitle("Distractors for Mujoco", fontsize=36, y=1.02)
 plt.tight_layout()
 plt.savefig("./plots/distractors_mujoco.png", dpi=DPI, bbox_inches="tight")
 plt.close()

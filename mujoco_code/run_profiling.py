@@ -2,10 +2,17 @@ import subprocess
 import time
 import csv
 from datetime import datetime
+from typing import Optional
 
 
-def run_experiment(aux, wass_steps, train_steps):
-    cmd = f"python train.py id=HalfCheetah-v2 aux={aux} wass_critic_train_steps={wass_steps} save_dir=logs_benchmark num_train_steps={train_steps}"
+def run_experiment(
+    env_name: str, aux: str, num_steps: int, wass_steps: Optional[int] = None
+):
+    # Build command based on whether wass_steps is needed
+    if wass_steps is not None:
+        cmd = f"python train.py id={env_name} aux={aux} wass_critic_train_steps={wass_steps} save_dir=logs_benchmark num_train_steps={num_steps}"
+    else:
+        cmd = f"python train.py id={env_name} aux={aux} save_dir=logs_benchmark num_train_steps={num_steps}"
 
     start_time = time.time()
     process = subprocess.run(
@@ -22,44 +29,77 @@ def run_experiment(aux, wass_steps, train_steps):
 
 
 def main():
+    # Environment name
+    env_name = "HalfCheetah-v2"
+
     # Experiment parameters
-    aux_types = ["bisim_critic", "zp_critic"]
+    # Simple aux types (no wass_steps)
+    simple_aux_types = ["l2", "rkl", "bisim"]
+    # Aux types that use wass_steps
+    critic_aux_types = ["bisim_critic", "zp_critic"]
     wass_steps_values = [1, 5, 10]
-    train_steps_values = [10000, 20000, 30000]
+    num_steps_values = [100000, 200000, 300000]
 
     # Prepare CSV file
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_filename = f"profiling_results_{timestamp}.csv"
+    csv_filename = f"mujoco_profiling_results_{timestamp}.csv"
 
     # CSV header
-    fieldnames = ["aux", "wass_critic_train_steps", "num_train_steps", "time_seconds"]
+    fieldnames = [
+        "env_name",
+        "aux",
+        "wass_critic_train_steps",
+        "num_steps",
+        "time_seconds",
+    ]
 
     with open(csv_filename, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
-        # Run experiments
-        for aux in aux_types:
+        # Run experiments for simple aux types (no wass_steps)
+        for aux in simple_aux_types:
+            for num_steps in num_steps_values:
+                print(f"\nRunning experiment: aux={aux}, num_steps={num_steps}")
+
+                execution_time = run_experiment(env_name, aux, num_steps)
+
+                if execution_time is not None:
+                    result = {
+                        "env_name": env_name,
+                        "aux": aux,
+                        "wass_critic_train_steps": "N/A",
+                        "num_steps": num_steps,
+                        "time_seconds": round(execution_time, 2),
+                    }
+
+                    writer.writerow(result)
+                    print(f"Completed in {round(execution_time, 2)} seconds")
+                    csvfile.flush()
+
+        # Run experiments for critic aux types (with wass_steps)
+        for aux in critic_aux_types:
             for wass_steps in wass_steps_values:
-                for train_steps in train_steps_values:
+                for num_steps in num_steps_values:
                     print(
-                        f"\nRunning experiment: aux={aux}, wass_steps={wass_steps}, train_steps={train_steps}"
+                        f"\nRunning experiment: aux={aux}, wass_steps={wass_steps}, num_steps={num_steps}"
                     )
 
-                    execution_time = run_experiment(aux, wass_steps, train_steps)
+                    execution_time = run_experiment(
+                        env_name, aux, num_steps, wass_steps
+                    )
 
                     if execution_time is not None:
                         result = {
+                            "env_name": env_name,
                             "aux": aux,
                             "wass_critic_train_steps": wass_steps,
-                            "num_train_steps": train_steps,
+                            "num_steps": num_steps,
                             "time_seconds": round(execution_time, 2),
                         }
 
                         writer.writerow(result)
                         print(f"Completed in {round(execution_time, 2)} seconds")
-
-                        # Flush the CSV file to save results immediately
                         csvfile.flush()
 
 

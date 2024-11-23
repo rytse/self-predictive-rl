@@ -99,7 +99,11 @@ def plot_results(envs, results, auxs, plot_title, filename):
                 rewards = df["return"][valid_idxs]
 
                 pretty_aux = aux_pretty_names[aux]
-                label = pretty_aux if len(results[env][aux]) == 1 else f"{pretty_aux} {exp_idx}"
+                label = (
+                    pretty_aux
+                    if len(results[env][aux]) == 1
+                    else f"{pretty_aux} {exp_idx}"
+                )
                 ax.plot(env_steps, rewards, label=label)
                 legend_labels.append(label)
 

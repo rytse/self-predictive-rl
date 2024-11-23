@@ -2,9 +2,12 @@ import subprocess
 import time
 import csv
 from datetime import datetime
+from typing import Optional
 
 
-def run_experiment(env_name, aux, num_steps, wass_steps=None):
+def run_experiment(
+    env_name: str, aux: str, num_steps: int, wass_steps: Optional[int] = None
+):
     # Build command based on whether wass_steps is needed
     if wass_steps is not None:
         cmd = f"python main.py --env_name {env_name} --aux {aux} --wass_critic_train_steps {wass_steps} --num_steps {num_steps}"
